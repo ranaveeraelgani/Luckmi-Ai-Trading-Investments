@@ -1599,30 +1599,52 @@ CONFIDENCE: [0-100]
   };
   // Buy More - Add to existing position
   const buyMore = (symbol: string, additionalAmount: number) => {
+    if (!symbol) {
+    console.error("buyMore: symbol is null or undefined");
+    alert("Error: No stock symbol found. Please try again.");
+    return;
+  }
     if (!additionalAmount || additionalAmount <= 0) return;
 
     setAutoStocks(prev => prev.map(stock => {
       if (stock.symbol === symbol) {
-        const currentAllocation = stock.allocation || 0;
-        const newTotalAllocation = currentAllocation + additionalAmount;
+        const currentPrice = toNumber(quotes[symbol]?.price || 0);
+        if (currentPrice <= 0) return stock;
 
-        return {
-          ...stock,
-          allocation: newTotalAllocation,     // Just increase total capital pool
-          // Do NOT touch currentPosition or tradeHistory here
-        };
+        const newAllocation = (stock.allocation || 0) + additionalAmount;
+
+        if (stock.currentPosition) {
+          const oldShares = stock.currentPosition.shares || 0;
+          const oldEntryPrice = stock.currentPosition.entryPrice || 0;
+          const oldCost = oldShares * oldEntryPrice;
+
+          const newShares = Math.floor(additionalAmount / currentPrice);
+          const newCost = newShares * currentPrice;
+
+          const totalShares = oldShares + newShares;
+          const newAverageEntryPrice = (oldCost + newCost) / totalShares;
+
+          return {
+            ...stock,
+            allocation: newAllocation,
+            currentPosition: {
+              ...stock.currentPosition,
+              shares: totalShares,
+              entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
+            }
+          };
+        }
+        return { ...stock, allocation: newAllocation };
       }
       return stock;
     }));
 
-    //addToAutoLog(`💰 BUY MORE ${symbol} - Added $${additionalAmount.toLocaleString()} to allocation`);
-    // Success
-    toast.success(`💰 BUY MORE ${symbol} - Added $${additionalAmount.toLocaleString()} to allocation`);
+    addToAutoLog(`💰 BUY MORE ${symbol} — +$${additionalAmount}`);
   };
 
   // Final evaluateStockForBuy - Rich Prompt + Early Cash Check
   const evaluateStockForBuy = async (symbol: string) => {
-    console.log(`🔍 Evaluating BUY for ${symbol}`);
+    //console.log(`🔍 Evaluating BUY for ${symbol}`);
 
     try {
       const currentPrice = toNumber(quotes[symbol]?.price);
@@ -1712,7 +1734,7 @@ Decide now.`;
   };
   // Smart Sell Decision - Uses real AI call with structured prompt
   const evaluateSellDecision = async (symbol: string, currentPosition: any, stock: any) => {
-    console.log(`🔍 Evaluating SELL for ${symbol}`);
+    //console.log(`🔍 Evaluating SELL for ${symbol}`);
 
     try {
       const currentPrice = toNumber(quotes[symbol]?.price);
@@ -1795,38 +1817,43 @@ Decide now.`;
       const currentStocks = [...autoStocks];   // Fresh copy every cycle
 
       for (let i = 0; i < currentStocks.length; i++) {
+        
         const stock = currentStocks[i];
-        const currentPrice = toNumber(quotes[stock.symbol]?.price);
 
         //console.log(`Evaluating ${stock.symbol} (status: ${stock.status}, allocation: $${stock.allocation || 0})`);
-
         // === BUY / BUY MORE CHECK ===
-        const investedSoFar = (stock.currentPosition?.shares || 0) * currentPrice;
-        const availableCash = (stock.allocation || 0) - investedSoFar;
+        // === BUY / BUY MORE CHECK ===
+        if (stock.status === 'idle' || stock.status === 'monitoring' || stock.status === 'in-position') {
+          const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
+          if (currentPrice <= 0) continue;
 
-        if (availableCash >= currentPrice) {
-          const toastId = toast.loading(`AI evaluating ${stock.symbol}...`);
-          const buyResult = await evaluateStockForBuy(stock.symbol);
-          toast.dismiss(toastId);
+          const investedSoFar = (stock.currentPosition?.shares || 0) * (stock.currentPosition?.entryPrice || 0);
+          const availableCash = (stock.allocation || 0) - investedSoFar;
 
-          if (buyResult?.shouldBuy === true && buyResult.entryPrice) {
-            const shares = Math.floor(availableCash / buyResult.entryPrice);
+          console.log(`[${stock.symbol}] investedSoFar: $${investedSoFar.toFixed(2)} | availableCash: $${availableCash.toFixed(2)}`);
 
-            if (shares > 0) {
-              const newPosition = {
-                entryPrice: buyResult.entryPrice,
-                shares: (stock.currentPosition?.shares || 0) + shares,
-                entryTime: stock.currentPosition?.entryTime || new Date(),
-                thesis: buyResult.thesis || "AI approved entry"
-              };
+          if (availableCash >= currentPrice) {
+            const buyResult = await evaluateStockForBuy(stock.symbol);
+
+            if (buyResult?.shouldBuy === true && buyResult.entryPrice) {
+              const sharesToBuy = Math.floor(availableCash / buyResult.entryPrice);
+              if (sharesToBuy < 1) continue;
+
+              // === CORRECT WEIGHTED AVERAGE ===
+              const oldShares = stock.currentPosition?.shares || 0;
+              const oldEntryPrice = stock.currentPosition?.entryPrice || 0;
+              const oldCost = oldShares * oldEntryPrice;
+              const newCost = sharesToBuy * buyResult.entryPrice;
+              const totalShares = oldShares + sharesToBuy;
+              const newAverageEntryPrice = (oldCost + newCost) / totalShares;
 
               const newTradeEntry = {
                 id: Date.now().toString(),
                 type: stock.currentPosition ? 'buy_more' : 'buy',
                 time: new Date(),
-                shares: shares,
+                shares: sharesToBuy,
                 price: buyResult.entryPrice,
-                amount: shares * buyResult.entryPrice,
+                amount: newCost,
                 reason: buyResult.thesis || "AI buy signal",
                 confidence: buyResult.confidence || 70
               };
@@ -1834,21 +1861,26 @@ Decide now.`;
               currentStocks[i] = {
                 ...stock,
                 status: 'in-position',
-                currentPosition: newPosition,
+                currentPosition: {
+                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
+                  shares: totalShares,
+                  entryTime: stock.currentPosition?.entryTime || new Date(),
+                  thesis: buyResult.thesis || "AI approved entry"
+                },
                 tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
               };
 
               hasChanges = true;
-              toast.success(`Auto Buy executed for ${stock.symbol}`, {
-                description: `${shares} shares @ $${buyResult.entryPrice.toFixed(2)}`,
-              });
+              addToAutoLog(`✅ AUTO ${stock.currentPosition ? 'BUY MORE' : 'BUY'} ${sharesToBuy} shares of ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`);
             }
+          } else {
+            console.log(`Not enough cash for ${stock.symbol} ($${availableCash.toFixed(0)} available)`);
           }
         }
 
         // === SELL CHECK ===
         else if (stock.status === 'in-position' && stock.currentPosition) {
-          const toastId = toast.loading(`AI evaluating ${stock.symbol}...`);
+          const toastId = toast.loading(`AI evaluating ${stock.symbol} to sell...`);
           const sellDecision = await evaluateSellDecision(stock.symbol, stock.currentPosition, stock);
           toast.dismiss(toastId);
 
@@ -1894,7 +1926,7 @@ Decide now.`;
       }
 
       if (hasChanges) {
-        //console.log('💾 Updating autoStocks after trade(s)');
+        console.log('💾 Updating autoStocks after trade(s)');
         setAutoStocks(currentStocks);
       }
     }, 45000); // 45 seconds
@@ -2003,7 +2035,7 @@ Decide now.`;
   // Ultra-safe getCtsForSymbol - Eliminates 'toFixed on never' error
   const getCtsForSymbol = async (symbol: string) => {
     try {
-      console.log(`Calculating full indicators for ${symbol}...`);
+      //console.log(`Calculating full indicators for ${symbol}...`);
 
       const fromDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const toDate = new Date().toISOString().split('T')[0];
@@ -2060,7 +2092,7 @@ Decide now.`;
 
       const recentClosesStr = closes.slice(-10).map((c: number) => Number(c).toFixed(2)).join(', ');
 
-      console.log(`Real CTS for ${symbol}: ${ctsScore} (${closes.length} bars)`);
+      //console.log(`Real CTS for ${symbol}: ${ctsScore} (${closes.length} bars)`);
 
       return {
         ctsScore,
@@ -2150,7 +2182,7 @@ Decide now.`;
     <ProtectedRoute>
       <div className="flex flex-col h-screen bg-[#0a0c11] overflow-hidden">
         {/* Testing Mode Banner */}
-        <div className="bg-amber-500/10 border-b border-amber-500/30 py-2.5 px-4 text-center text-amber-400 text-sm font-medium">
+        <div className="bg-amber-500/10 border-b border-amber-500/30 py-1.5 px-4 text-center text-amber-400 text-xs font-medium">
           🔬 Luckmi AI Testing Mode • Paper Trading Only • All trades are simulated • Feedback is very welcome!
         </div>
         {/* Top Navigation Bar */}
@@ -2198,9 +2230,9 @@ Decide now.`;
         </div>
 
         {/* Mobile Top Bar */}
-        <div className="lg:hidden border-b border-gray-800 bg-[#11151c] px-4 py-3 flex items-center justify-between shrink-0">
+        {/* <div className="lg:hidden border-b border-gray-800 bg-[#11151c] px-4 py-3 flex items-center justify-between shrink-0">
           <h1 className="font-semibold text-lg">AI Trading Assistant</h1>
-        </div>
+        </div> */}
 
         {/* Top Tabs */}
         <div className="bg-[#11151c] border-b border-gray-800 px-4 py-3 flex gap-8 shrink-0">
@@ -2211,7 +2243,7 @@ Decide now.`;
               : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
           >
-            Watchlist
+            Watchlist ({watchlist.length})
           </button>
           <button
             onClick={() => setActiveTab('portfolio')}
@@ -2220,7 +2252,7 @@ Decide now.`;
               : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
           >
-            Portfolio
+            Portfolio ({portfolio.length})
           </button>
           <button
             onClick={() => setActiveTab('auto')}
@@ -2229,21 +2261,21 @@ Decide now.`;
               : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
           >
-            Auto
+            Auto ({autoStocks.length})
           </button>
         </div>
 
         <div className="flex flex-1 overflow-hidden flex-col lg:flex-row">
 
           {/* LEFT SIDEBAR - Watchlist / Portfolio */}
-          <aside className="w-full lg:w-72 border-b lg:border-r border-gray-800 bg-[#11151c] p-4 lg:p-5 overflow-y-auto lg:shrink-0 max-h-[38vh] lg:max-h-none">
+          <aside className="w-full lg:w-72 border-b lg:border-r border-gray-800 bg-[#11151c] p-4 lg:p-5 overflow-y-auto lg:shrink-0 max-h-[30vh] lg:max-h-none">
 
             {activeTab === 'watchlist' ? (
               // WATCHLIST TAB
               <>
-                <h2 className="text-lg font-semibold mb-4 text-gray-200">Watchlist ({watchlist.length})</h2>
+                {/* <h2 className="text-lg font-semibold mb-2 text-gray-200">Watchlist ({watchlist.length})</h2> */}
 
-                <div className="flex items-center justify-end mb-4">
+                <div className="flex items-center justify-end mb-2">
                   {watchlist.length > 0 && (
                     <button
                       onClick={() => {
@@ -2260,7 +2292,7 @@ Decide now.`;
                   )}
                 </div>
 
-                <form onSubmit={handleWatchlistSubmit} className="flex gap-2 mb-6">
+                <form onSubmit={handleWatchlistSubmit} className="flex gap-2 mb-4">
                   <input
                     type="text"
                     value={watchlistInput}
@@ -2285,7 +2317,7 @@ Decide now.`;
                         <div
                           key={symbol}
                           onClick={() => setSelectedStock(symbol)}
-                          className={`group flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all hover:bg-[#1a1f2e] border ${selectedStock === symbol
+                          className={`group flex items-center justify-between p-1.5 rounded-2xl cursor-pointer transition-all hover:bg-[#1a1f2e] border ${selectedStock === symbol
                             ? 'bg-[#1a1f2e] border-blue-500'
                             : 'border-transparent hover:border-gray-700'
                             }`}
@@ -2360,12 +2392,12 @@ Decide now.`;
 
                   {/* Portfolio Summary Card */}
                   {portfolio.length > 0 && (
-                    <div className="bg-gradient-to-br from-[#1a1f2e] to-[#11151c] border border-gray-700 rounded-3xl p-4 lg:p-5">   {/* Reduced padding */}
+                    <div className="bg-gradient-to-br from-[#1a1f2e] to-[#11151c] border border-gray-700 rounded-3xl p-2 lg:p-5">   {/* Reduced padding */}
 
                       <div className="flex justify-between items-center">
                         <div>
                           <div className="text-xs text-gray-400">Total Portfolio Value</div>
-                          <div className="text-3xl font-bold text-white mt-1">   {/* Smaller text */}
+                          <div className="text-2xl font-bold text-white mt-1">   {/* Smaller text */}
                             ${portfolio.reduce((total, pos) => {
                               const quote = quotes[pos.symbol];
                               const currentPrice = quote ? Number(quote.price) : 0;
@@ -2374,7 +2406,7 @@ Decide now.`;
                           </div>
                         </div>
 
-                        <div className="text-right">
+                        <div className="text-right justify-between">
                           <div className="text-xs text-gray-400">Total P&L</div>
                           <div className={`text-xl font-semibold mt-1 ${   // Smaller text
                             portfolio.reduce((total, pos) => {
@@ -2393,7 +2425,7 @@ Decide now.`;
                       </div>
 
                       {/* Small stats row */}
-                      <div className="grid grid-cols-2 gap-4 mt-4 text-xs">
+                      <div className="grid grid-cols-2 gap-4 mt-4 text-xs justify-between">
                         <div>
                           <span className="text-gray-400">Holdings:</span>
                           <span className="font-medium text-white ml-1.5">{portfolio.length}</span>
@@ -2461,7 +2493,7 @@ Decide now.`;
                           <div
                             key={index}
                             onClick={() => setSelectedStock(pos.symbol)}
-                            className={`p-4 rounded-2xl border transition-all cursor-pointer ${isSelected ? 'bg-blue-900/30 border-blue-500' : 'bg-[#1a1f2e] border-transparent hover:bg-[#242a3a]'
+                            className={`p-2 rounded-2xl border transition-all cursor-pointer ${isSelected ? 'bg-blue-900/30 border-blue-500' : 'bg-[#1a1f2e] border-transparent hover:bg-[#242a3a]'
                               }`}
                           >
                             <div className="flex justify-between items-start">
@@ -2686,10 +2718,12 @@ Decide now.`;
                           {/* Auto Stock Card - Clean with subtle indicators */}
                           {autoStocks.map((stock, index) => {
                             const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
+
                             const invested = stock.currentPosition
-                              ? stock.currentPosition.shares * currentPrice
+                              ? (stock.currentPosition.shares || 0) * (stock.currentPosition.entryPrice || 0)
                               : 0;
-                            const remainingCash = (stock.allocation || 0) - invested;
+
+                            const remainingCash = Math.max(0, (stock.allocation || 0) - invested);   // Prevent negative values
                             const unrealizedPnL = stock.currentPosition
                               ? (currentPrice - stock.currentPosition.entryPrice) * stock.currentPosition.shares
                               : 0;
@@ -2761,7 +2795,11 @@ Decide now.`;
                                 <div className="mt-6 flex gap-3">
                                   <button
                                     onClick={() => {
-                                      setSelectedAutoStock(stock);
+                                      if (!stock) {
+                                        alert("Stock data is missing");
+                                        return;
+                                      }
+                                      setSelectedAutoStock(stock);        // ← Force set it here
                                       setBuyMoreAmount(0);
                                       setShowBuyMoreModal(true);
                                     }}
@@ -2886,7 +2924,7 @@ Decide now.`;
                 </div>
               )}
               {autoStocks.every(s => !s.tradeHistory || s.tradeHistory.length === 0) && (
-                <div className="mt-10 text-center py-12 text-gray-500">
+                <div className="mt-4 text-center py-4 text-gray-500 text-xs">
                   No trades yet.<br />Auto trading will appear here when buys/sells happen.
                 </div>
               )}
@@ -3956,16 +3994,25 @@ Decide now.`;
                 </button>
                 <button
                   onClick={() => {
-                    if (buyMoreAmount > 0) {
-                      buyMore(selectedAutoStock.symbol, buyMoreAmount);
+                    if (!selectedAutoStock) {
+                      alert("No stock selected. Please try again.");
                       setShowBuyMoreModal(false);
-                      setBuyMoreAmount(0);
+                      return;
                     }
+                    if (buyMoreAmount <= 0) {
+                      alert("Please enter a valid amount greater than 0");
+                      return;
+                    }
+
+                    // Safe call
+                    buyMore(selectedAutoStock.symbol, buyMoreAmount);
+
+                    setShowBuyMoreModal(false);
+                    setBuyMoreAmount(0);
                   }}
-                  disabled={buyMoreAmount <= 0}
-                  className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 rounded-2xl font-medium transition-colors"
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-2xl font-medium transition-colors"
                 >
-                  Add ${buyMoreAmount.toLocaleString()}
+                  Confirm Buy More
                 </button>
               </div>
             </div>
