@@ -834,7 +834,7 @@ export default function ChatPage() {
         setTradeRecommendation(ctsResult.recommendation as 'Strong Buy' | 'Buy' | 'Hold' | 'Avoid' | 'Sell');
         setFiltersApplied(ctsResult.filtersApplied || {});
 
-        console.log(`CTS updated for ${selectedStock} (${timeRange} ${resolution}): ${ctsResult.finalScore}`);
+        //console.log(`CTS updated for ${selectedStock} (${timeRange} ${resolution}): ${ctsResult.finalScore}`);
 
         // 4. Trigger AI ONLY ONCE after everything is ready
         setTimeout(() => {
@@ -908,43 +908,54 @@ export default function ChatPage() {
       const prompt = `
 You are a disciplined, rules-based trading analyst. Your primary input is the Confluence Trading Score (CTS) from the app.
 
-CTS Zones - Follow these strictly as the main anchor:
-- 78–100: Strong Buy Zone (high conviction opportunity)
-- 65–77: Buy Zone (favorable setup)
-- 53–64: Hold Zone (neutral, wait for better confirmation)
-- 40–52: Avoid Zone (low probability or high risk)
-- Below 40: Sell Zone (bearish bias)
+CTS Zones (STRICT anchor):
+- 78–100: Strong Buy
+- 65–77: Buy
+- 53–64: Hold
+- 40–52: Avoid
+- Below 40: Sell
 
-Core Rules you MUST follow:
-1. Always begin your reasoning by clearly stating the app's CTS score and which zone it falls into for ${stock}.
-2. Default to the recommendation suggested by the CTS zone.
-3. Your AI Score must stay within the same zone or ONE adjacent zone as the app's CTS score.
-4. Only go outside adjacent zones if there is a VERY strong, clearly identifiable conflicting signal. In that case, explain the reason honestly and keep the deviation minimal.
-5. Never recommend Buy if CTS is below 60 unless there is an exceptionally strong bullish reason (e.g. powerful breakout + high volume surge).
-6. Never recommend Sell if CTS is above 65 unless there is a very strong bearish reason.
+CORE RULES:
+1. Always begin by stating the CTS score and its zone for ${stock}.
+2. CTS is the PRIMARY anchor. Default to its recommendation unless strong conflicting evidence exists.
+3. Your recommendation must remain within the same or ONE adjacent zone.
+4. Only deviate beyond one zone if there is clear, high-confidence evidence (e.g., strong divergence + volume + trend shift).
+5. Avoid recommending Buy below 60 unless strong confirmation signals exist.
+6. Avoid recommending Sell above 65 unless strong bearish confirmation exists.
 
-After your recommendation, provide your own independent AI Score (0-100).
-Rules for AI Score:
-- Calculate a NEW number based on your own analysis.
-- Do NOT repeat or copy the exact app CTS score.
-- The number must be within ±10 points of the app's CTS score, but it should be different and respect the zone rules above.
+AI SCORE RULES:
+- Generate a NEW score (do not copy CTS).
+- Must be within ±10 of CTS.
+- Must remain consistent with your recommendation and zone logic.
+
+ANALYSIS PRIORITY (IMPORTANT):
+1. Trend (price vs 200 EMA)
+2. Momentum (MACD direction and RSI range)
+3. Strength/weakness (recent price structure)
+4. Confirmation or risk (volume, divergence if implied)
+
+CONFIDENCE GUIDELINES:
+- 80–100: Strong trend + multiple confirmations aligned
+- 60–79: Mostly aligned signals, minor conflict
+- 40–59: Mixed signals
+- Below 40: Weak or conflicting setup
 
 Current data:
 Stock: ${stock}
-App CTS Score: ${ctsScore}/100 (Raw Base Score: ${rawBaseScore || 'N/A'})
+CTS Score: ${ctsScore}/100 (Raw: ${rawBaseScore || 'N/A'})
 200 EMA: ${safeEma200Last}
-RSI (14): ${safeLastRSI}
+RSI: ${safeLastRSI}
 MACD: ${safeLastMACD} (Signal: ${safeLastSignal})
-Trend vs 200 EMA: ${Number(lastClose) > Number(safeEma200Last) ? 'Above' : 'Below'}
+Trend: ${Number(lastClose) > Number(safeEma200Last) ? 'Above EMA (Bullish)' : 'Below EMA (Bearish)'}
 Recent closes: ${safeRecentCloses}
 
-${customInstruction ? `Additional user instruction: ${customInstruction}` : ''}
+${customInstruction ? `User instruction: ${customInstruction}` : ''}
 
-Format exactly:
-ACTION: Buy / Hold / Sell
-REASON: [3-4 sentences maximum. Must start with the CTS score and zone for ${stock}, then add supporting context about ${stock}'s price action, indicators, trend, and any key risks or confirmations. Keep it concise but informative.]
-AI Score: [your own calculated DIFFERENT number] ±10
-CONFIDENCE: [0-100]
+OUTPUT FORMAT (strict):
+ACTION: Buy / Hold / Sell  
+REASON: 3-4 sentences. First sentence MUST state CTS score and zone. Then explain reasoning using trend, momentum, and risks.  
+AI Score: [number within ±10 but different]  
+CONFIDENCE: [0-100 based on rules above]
 `;
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -1170,7 +1181,7 @@ CONFIDENCE: [0-100]
     const signal = calculateEMA(macd, 9);
     const histogram = macd.slice(-signal.length).map((m, i) => m - signal[i]);
 
-    return { macd, signal, histogram };
+    return { macd: macd.slice(-signal.length), signal, histogram };
   };
 
   // RSI (14)
@@ -1364,7 +1375,7 @@ CONFIDENCE: [0-100]
   const calculateFinalCTS = (
     ohlc: any[],
     closes: number[],
-    macdData: any[] = [],      // This is the full MACD array
+    macdData: any[] = [],
     rsiData: number[] = [],
     ema200Data: number[] = [],
     volumes: number[] = [],
@@ -1372,6 +1383,7 @@ CONFIDENCE: [0-100]
     news: any[] = [],
     spyCloses: number[] = []
   ) => {
+
     if (closes.length < 30) {
       return {
         finalScore: 50,
@@ -1382,85 +1394,308 @@ CONFIDENCE: [0-100]
         lastMACD: 'N/A',
         lastSignal: 'N/A',
         ema200Last: 'N/A',
-        recentCloses: closes.slice(-10)
+        recentCloses: closes.slice(-10),
+        lastClose: closes.at(-1)
       };
     }
 
-    let rawBaseScore = 42;
+    let rawBaseScore = 50;
 
-    const lastClose = closes[closes.length - 1];
-    const ema200Last = ema200Data.length > 0 ? ema200Data[ema200Data.length - 1] : lastClose;
-    const distanceFromEMA = Math.abs(lastClose - ema200Last);
+    const lastClose = toNumber(closes.at(-1));
+    const ema200Last = toNumber(ema200Data.length > 0 ? ema200Data.at(-1) : lastClose);
+    const lastRSI = toNumber(rsiData.length > 0 ? rsiData.at(-1) : 50);
 
-    // 1. EMA Position
-    const isAboveEMA200 = lastClose > ema200Last + 0.5;
-    rawBaseScore += isAboveEMA200 ? 15 : 5;
+    // -------------------
+    // 1. TREND (balanced)
+    // -------------------
+    const isAboveEMA200 = lastClose > ema200Last;
 
-    // 2. Trend Structure
-    const isUptrend = closes[closes.length - 1] > closes[Math.max(0, closes.length - 20)];
-    rawBaseScore += isUptrend ? 12 : 7;
+    rawBaseScore += isAboveEMA200 ? 8 : -8;
 
-    // 3. Momentum (RSI)
-    const lastRSI = rsiData.length > 0 ? rsiData[rsiData.length - 1] : 50;
-    let momentum = 8;
-    if (lastRSI > 70) momentum = 13;
-    else if (lastRSI > 58) momentum = 11;
-    else if (lastRSI > 50) momentum = 10;
-    else if (lastRSI < 45) momentum = 6;
+    const isUptrend = lastClose > toNumber(closes.at(-20));
+    rawBaseScore += isUptrend ? 6 : -6;
+
+    // -------------------
+    // 2. MOMENTUM (RSI improved)
+    // -------------------
+    let momentum = 0;
+
+    if (lastRSI >= 55 && lastRSI <= 65) momentum = 8;
+    else if (lastRSI > 65 && lastRSI <= 75) momentum = 5;
+    else if (lastRSI > 75) momentum = -4;
+    else if (lastRSI < 45) momentum = -6;
+
     rawBaseScore += momentum;
 
-    // 4. Volume
-    const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20 || 1;
-    const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
-    const volumeSurge = recentVol > avgVol * 1.35;
-    rawBaseScore += volumeSurge ? 10 : 6;
+    if (lastRSI >= 55 && lastRSI <= 65 && isAboveEMA200) {
+      rawBaseScore += 3; // strong trend continuation zone
+    }
+    // -------------------
+    // 3. MACD (added properly)
+    // -------------------
+    const macdResult = calculateMACD(closes);
 
-    // 5. News Sentiment
-    rawBaseScore += calculateNewsSentiment(news);
+    let macdScore = 0;
 
-    // 6. Relative Strength vs SPY
+    if (macdResult.signal.length > 1) {
+      const macdLine = macdResult.macd.slice(-macdResult.signal.length);
+
+      const curr = {
+        macd: macdLine.at(-1),
+        signal: macdResult.signal.at(-1),
+        histogram: macdResult.histogram.at(-1)
+      };
+
+      const prev = {
+        macd: macdLine.at(-2),
+        signal: macdResult.signal.at(-2),
+        histogram: macdResult.histogram.at(-2)
+      };
+
+      if (
+        curr.macd !== undefined &&
+        curr.signal !== undefined &&
+        curr.histogram !== undefined &&
+        prev.macd !== undefined &&
+        prev.signal !== undefined &&
+        prev.histogram !== undefined
+      ) {
+
+        // -------------------
+        // 1. Trend Bias
+        // -------------------
+        if (curr.macd > 0) macdScore += 3;
+        else macdScore -= 3;
+
+        // -------------------
+        // 2. Crossover
+        // -------------------
+        if (curr.macd > curr.signal) macdScore += 3;
+        else macdScore -= 3;
+
+        // -------------------
+        // 3. Momentum (Histogram slope)
+        // -------------------
+        if (curr.histogram > prev.histogram) macdScore += 2;
+        else macdScore -= 2;
+
+        // -------------------
+        // 4. Strong crossover bonus (optional but good)
+        // -------------------
+        if (
+          prev.macd < prev.signal &&
+          curr.macd > curr.signal &&
+          curr.macd > 0
+        ) {
+          macdScore += 2;
+        }
+
+        // -------------------
+        // 5. Noise filter (sideways market)
+        // -------------------
+        if (Math.abs(curr.macd) < 0.1) {
+          macdScore *= 0.5;
+        }
+      }
+    }
+    rawBaseScore += macdScore;
+
+    // -------------------
+    // 4. VOLUME (fixed bias)
+    // -------------------
+    let volumeScore = 0;
+
+    if (volumes.length >= 20) {
+      const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+      const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+
+      if (recentVol > avgVol * 1.5) volumeScore = 6;
+      else if (recentVol < avgVol * 0.8) volumeScore = -4;
+    }
+
+    rawBaseScore += volumeScore;
+
+    // -------------------
+    // 5. NEWS (capped)
+    // -------------------
+    const newsScore = Math.max(-5, Math.min(5, calculateNewsSentiment(news)));
+    rawBaseScore += newsScore;
+
+    // -------------------
+    // 6. RELATIVE STRENGTH
+    // -------------------
     if (spyCloses.length > 15 && closes.length > 15) {
-      const stockReturn = (closes[closes.length - 1] / closes[closes.length - 16]) - 1;
-      const spyReturn = (spyCloses[spyCloses.length - 1] / spyCloses[spyCloses.length - 16]) - 1;
+      const stockReturn = lastClose / toNumber(closes.at(-16)) - 1;
+      const spyReturn = toNumber(spyCloses.at(-1)) / toNumber(spyCloses.at(-16)) - 1;
+
       const relative = stockReturn - spyReturn;
-      if (relative > 0.06) rawBaseScore += 7;
+
+      if (relative > 0.05) rawBaseScore += 6;
       else if (relative < -0.05) rawBaseScore -= 6;
     }
 
-    // 7. Chop Penalty
+    // -------------------
+    // 7. CHOP PENALTY (reduced)
+    // -------------------
     const range10 = Math.max(...closes.slice(-10)) - Math.min(...closes.slice(-10));
-    if (range10 < 2.5) rawBaseScore -= 11;
+    const isChoppy = range10 < 2;
 
-    // Timeframe stability
+    if (isChoppy) rawBaseScore -= 5;
+
+    // -------------------
+    // Timeframe bonus (reduced)
+    // -------------------
     const isShortTerm = closes.length < 80;
-    if (!isShortTerm) rawBaseScore += 5;
+    if (!isShortTerm) rawBaseScore += 3;
 
+    // -------------------
+    // divergence score
+    // -------------------
+    let divergenceScore = 0;
+
+    if (closes.length > 30 && rsiData.length > 30 && macdResult.macd.length > 30) {
+
+      const lookback = 14;
+
+      const priceRecent = closes.slice(-lookback);
+      const rsiRecent = rsiData.slice(-lookback);
+
+      const macdLine = macdResult.macd.slice(-macdResult.signal.length);
+      const macdRecent = macdLine.slice(-lookback);
+
+      const priceLow1 = Math.min(...priceRecent.slice(0, lookback / 2));
+      const priceLow2 = Math.min(...priceRecent.slice(lookback / 2));
+
+      const rsiLow1 = Math.min(...rsiRecent.slice(0, lookback / 2));
+      const rsiLow2 = Math.min(...rsiRecent.slice(lookback / 2));
+
+      const macdLow1 = Math.min(...macdRecent.slice(0, lookback / 2));
+      const macdLow2 = Math.min(...macdRecent.slice(lookback / 2));
+
+      const priceHigh1 = Math.max(...priceRecent.slice(0, lookback / 2));
+      const priceHigh2 = Math.max(...priceRecent.slice(lookback / 2));
+
+      const rsiHigh1 = Math.max(...rsiRecent.slice(0, lookback / 2));
+      const rsiHigh2 = Math.max(...rsiRecent.slice(lookback / 2));
+
+      const macdHigh1 = Math.max(...macdRecent.slice(0, lookback / 2));
+      const macdHigh2 = Math.max(...macdRecent.slice(lookback / 2));
+
+      // Bullish RSI divergence
+      if (priceLow2 < priceLow1 && rsiLow2 > rsiLow1) {
+        divergenceScore += 4;
+      }
+
+      // Bullish MACD divergence
+      if (priceLow2 < priceLow1 && macdLow2 > macdLow1) {
+        divergenceScore += 3;
+      }
+
+      // Bearish RSI divergence
+      if (priceHigh2 > priceHigh1 && rsiHigh2 < rsiHigh1) {
+        divergenceScore -= 4;
+      }
+
+      // Bearish MACD divergence
+      if (priceHigh2 > priceHigh1 && macdHigh2 < macdHigh1) {
+        divergenceScore -= 3;
+      }
+    }
+    rawBaseScore += divergenceScore;
+
+    //-------------
+    // breakout score (new)
+    //-------------
+    let breakoutScore = 0;
+
+    if (closes.length > 20) {
+      const recentHigh = Math.max(...closes.slice(-20, -1));
+      const lastClose = toNumber(closes.at(-1));
+
+      const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+      const recentVol = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
+
+      const isBreakout = lastClose > recentHigh;
+      const strongVolume = recentVol > avgVol * 1.4;
+
+      if (isBreakout && strongVolume) breakoutScore += 8;     // strong breakout
+      else if (isBreakout) breakoutScore += 5;                // weak breakout
+    }
+    rawBaseScore += breakoutScore;
+    //---------------
+    // volatility score (new)
+    //---------------
+    let volatilityScore = 0;
+
+    const rangeRecent = Math.max(...closes.slice(-5)) - Math.min(...closes.slice(-5));
+    const rangePast = Math.max(...closes.slice(-20, -5)) - Math.min(...closes.slice(-20, -5));
+
+    if (rangeRecent > rangePast * 1.3) volatilityScore += 4;   // expansion
+    else if (rangeRecent < rangePast * 0.7) volatilityScore -= 3; // contraction
+
+    rawBaseScore += volatilityScore;
+
+    //-------------------
+    // market score (new)
+    //-------------------
+    let marketScore = 0;
+
+    if (spyCloses.length > 50) {
+      const spyEMA50 = spyCloses.slice(-50).reduce((a, b) => a + b, 0) / 50;
+      const spyLast = spyCloses.at(-1);
+
+      if (toNumber(spyLast) > spyEMA50) marketScore += 3;
+      else marketScore -= 4;
+    }
+    rawBaseScore += marketScore;
+
+    //-------------------
+    // exaustion score (new)
+    //-------------------
+    let exhaustionScore = 0;
+
+    const recentMove = (lastClose / toNumber(closes.at(-10))) - 1;
+
+    if (recentMove > 0.18 && lastRSI > 75) {
+      exhaustionScore -= 6; // overextended
+    }
+    rawBaseScore += exhaustionScore;
+    // -------------------
+    // FINAL SCORE
+    // -------------------
     let finalScore = Math.round(rawBaseScore);
-    finalScore = Math.max(38, Math.min(92, finalScore));
+    finalScore = Math.max(20, Math.min(95, finalScore));
 
     const recommendation =
-      finalScore >= 78 ? 'Strong Buy' :
+      finalScore >= 80 ? 'Strong Buy' :
         finalScore >= 65 ? 'Buy' :
-          finalScore >= 53 ? 'Hold' :
-            finalScore >= 40 ? 'Avoid' : 'Sell';
+          finalScore >= 50 ? 'Hold' :
+            finalScore >= 35 ? 'Avoid' : 'Sell';
 
-    // Extract last MACD and Signal safely
-    const lastMACD = macdData.length > 0 ? macdData[macdData.length - 1] : 'N/A';
-    const lastSignal = macdData.length > 9 ? macdData[macdData.length - 10] : 'N/A'; // rough approximation
+    // -------------------
+    // MACD outputs (fixed)
+    // -------------------
+    const lastMACD = macdData.length > 0 ? macdData.at(-1) : 'N/A';
+    const lastSignal = macdData.length > 0 ? macdData.at(-1) : 'N/A'; // (replace if you store signal separately)
 
     return {
       finalScore,
       rawBaseScore: Math.round(rawBaseScore),
       recommendation,
-      filtersApplied: { lowVolatility: range10 < 2.5, structure: !isUptrend },
 
-      // Values needed for AI prompt
+      filtersApplied: {
+        lowVolatility: isChoppy,
+        structure: !isUptrend
+      },
+
       lastRSI: Math.round(lastRSI),
+
       lastMACD: typeof lastMACD === 'number' ? lastMACD.toFixed(4) : 'N/A',
       lastSignal: typeof lastSignal === 'number' ? lastSignal.toFixed(4) : 'N/A',
+
       ema200Last: ema200Last ? ema200Last.toFixed(2) : 'N/A',
       recentCloses: closes.slice(-10),
-      lastClose: lastClose
+      lastClose
     };
   };
   // 1. ATR (simple 14-period using closes for speed)
