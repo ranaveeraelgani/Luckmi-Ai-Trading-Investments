@@ -72,13 +72,6 @@ export default function ChatPage() {
   const [quotes, setQuotes] = useState<Record<string, { price: string; change: string; percentChange: string }>>({});
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [aiRecommendation, setAiRecommendation] = useState<AiRecommendation | null>(null);
-  const [volumeData, setVolumeData] = useState<any[]>([]);
-  // Near your other states
-  const [closesState, setClosesState] = useState<number[]>([]);
-  const [rsiState, setRsiState] = useState<number[]>([]);
-  const [macdState, setMacdState] = useState<number[]>([]);
-  const [signalState, setSignalState] = useState<number[]>([]);
-  const [ema200State, setEma200State] = useState<number[]>([]);
   const [showCtsModal, setShowCtsModal] = useState(false);
   // Near top of component (with other states)
   const [rectangleBreakout, setRectangleBreakout] = useState<{
@@ -129,18 +122,6 @@ export default function ChatPage() {
   const [aiLastClose, setAiLastClose] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'watchlist' | 'portfolio' | 'auto'>('watchlist');
   const [autoStocks, setAutoStocks] = useState<any[]>([]);
-  // Structure: { 
-  //   id: string, 
-  //   symbol: string, 
-  //   allocation: number, 
-  //   rinseRepeat: boolean, 
-  //   maxRepeats: number, 
-  //   customGuidance: string, 
-  //   status: 'idle' | 'monitoring' | 'in-position' | 'completed',
-  //   currentPosition: { entryPrice: number, shares: number, entryTime: Date, thesis: string } | null,
-  //   tradeHistory: any[]
-  // }
-
   const [showAddAutoModal, setShowAddAutoModal] = useState(false);
   const [newAutoSymbol, setNewAutoSymbol] = useState('');
   const [newAllocation, setNewAllocation] = useState(1000);
@@ -150,9 +131,6 @@ export default function ChatPage() {
   const [isAutoMonitoring, setIsAutoMonitoring] = useState(false);
   const [compoundProfits, setCompoundProfits] = useState(true);
   const [autoLog, setAutoLog] = useState<any[]>([]); // For history logging
-  {/* Add these new states */ }
-  const [targetProfit, setTargetProfit] = useState(12);
-  const [stopLoss, setStopLoss] = useState(-8);
   const [showBuyMoreModal, setShowBuyMoreModal] = useState(false);
   const [buyMoreAmount, setBuyMoreAmount] = useState(100);
   const [selectedAutoStock, setSelectedAutoStock] = useState<any>(null);
@@ -165,6 +143,8 @@ export default function ChatPage() {
   const [showReportsModal, setShowReportsModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
+  const autoStocksRef = useRef(autoStocks);
+  const quotesRef = useRef(quotes);
   // Auto Trading Monitoring Engine
   useEffect(() => {
     if (!isAutoMonitoring || autoStocks.length === 0) return;
@@ -832,8 +812,8 @@ export default function ChatPage() {
         });
         setRawBaseScore(ctsResult.rawBaseScore);
         setTradeRecommendation(ctsResult.recommendation as 'Strong Buy' | 'Buy' | 'Hold' | 'Avoid' | 'Sell');
-        setFiltersApplied(ctsResult.filtersApplied || {});
-
+        setFiltersApplied(ctsResult.ctsBreakdown || {});
+        //console.log('CTS Breakdown:', ctsResult.ctsBreakdown, filtersApplied);
         //console.log(`CTS updated for ${selectedStock} (${timeRange} ${resolution}): ${ctsResult.finalScore}`);
 
         // 4. Trigger AI ONLY ONCE after everything is ready
@@ -1025,82 +1005,6 @@ CONFIDENCE: [0-100 based on rules above]
     e.preventDefault();
     if (watchlistInput.trim()) {
       addToWatchlist(watchlistInput);
-    }
-  };
-
-  const handleChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    const userMessage = input.trim();
-    const lower = userMessage.toLowerCase();
-
-    if (lower.startsWith('add ') && lower.includes('to watchlist')) {
-      const symbolMatch = userMessage.match(/add\s+([A-Za-z]+)/i);
-      if (symbolMatch) {
-        addToWatchlist(symbolMatch[1]);
-        setInput('');
-        return;
-      }
-    }
-    if (lower.startsWith('remove ') || lower.startsWith('delete ')) {
-      const symbolMatch = userMessage.match(/(?:remove|delete)\s+([A-Za-z]+)/i);
-      if (symbolMatch) {
-        removeFromWatchlist(symbolMatch[1]);
-        setInput('');
-        return;
-      }
-    }
-
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage, timestamp: new Date() }]);
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })).concat({ role: 'user', content: userMessage }),
-        }),
-      });
-
-      if (!response.ok) throw new Error('API error');
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader');
-
-      let aiContent = '';
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        aiContent += decoder.decode(value);
-
-        setMessages((prev) => {
-          const newMsgs = [...prev];
-          const last = newMsgs[newMsgs.length - 1];
-          if (last && last.role === 'assistant') {
-            newMsgs[newMsgs.length - 1] = { ...last, content: aiContent };
-          } else {
-            newMsgs.push({ role: 'assistant', content: aiContent, timestamp: new Date() });
-          }
-          return newMsgs;
-        });
-      }
-    } catch (err) {
-      console.error(err);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: 'Sorry, something went wrong.', timestamp: new Date() },
-      ]);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -1400,7 +1304,11 @@ CONFIDENCE: [0-100 based on rules above]
     }
 
     let rawBaseScore = 50;
-
+    let trendScore = 0;
+    let emaScore = 0;
+    let momentumScore = 0;
+    let relativeScore = 0;
+    let penaltyScore = 0;
     const lastClose = toNumber(closes.at(-1));
     const ema200Last = toNumber(ema200Data.length > 0 ? ema200Data.at(-1) : lastClose);
     const lastRSI = toNumber(rsiData.length > 0 ? rsiData.at(-1) : 50);
@@ -1409,11 +1317,12 @@ CONFIDENCE: [0-100 based on rules above]
     // 1. TREND (balanced)
     // -------------------
     const isAboveEMA200 = lastClose > ema200Last;
-
-    rawBaseScore += isAboveEMA200 ? 8 : -8;
+    emaScore = isAboveEMA200 ? 8 : -8;
+    rawBaseScore += emaScore;
 
     const isUptrend = lastClose > toNumber(closes.at(-20));
-    rawBaseScore += isUptrend ? 6 : -6;
+    trendScore = isUptrend ? 6 : -6;
+    rawBaseScore += trendScore;
 
     // -------------------
     // 2. MOMENTUM (RSI improved)
@@ -1424,8 +1333,8 @@ CONFIDENCE: [0-100 based on rules above]
     else if (lastRSI > 65 && lastRSI <= 75) momentum = 5;
     else if (lastRSI > 75) momentum = -4;
     else if (lastRSI < 45) momentum = -6;
-
-    rawBaseScore += momentum;
+    momentumScore = momentum;
+    rawBaseScore += momentumScore;
 
     if (lastRSI >= 55 && lastRSI <= 65 && isAboveEMA200) {
       rawBaseScore += 3; // strong trend continuation zone
@@ -1530,8 +1439,9 @@ CONFIDENCE: [0-100 based on rules above]
 
       const relative = stockReturn - spyReturn;
 
-      if (relative > 0.05) rawBaseScore += 6;
-      else if (relative < -0.05) rawBaseScore -= 6;
+      if (relative > 0.05) relativeScore += 6;
+      else if (relative < -0.05) relativeScore -= 6;
+      rawBaseScore += relativeScore;
     }
 
     // -------------------
@@ -1540,7 +1450,8 @@ CONFIDENCE: [0-100 based on rules above]
     const range10 = Math.max(...closes.slice(-10)) - Math.min(...closes.slice(-10));
     const isChoppy = range10 < 2;
 
-    if (isChoppy) rawBaseScore -= 5;
+    if (isChoppy) penaltyScore -= 5;
+    rawBaseScore += penaltyScore;
 
     // -------------------
     // Timeframe bonus (reduced)
@@ -1695,7 +1606,15 @@ CONFIDENCE: [0-100 based on rules above]
 
       ema200Last: ema200Last ? ema200Last.toFixed(2) : 'N/A',
       recentCloses: closes.slice(-10),
-      lastClose
+      lastClose,
+      ctsBreakdown: {
+        trend: trendScore,
+        ema: emaScore,
+        momentum: momentumScore,
+        volume: volumeScore,
+        relative: relativeScore,
+        penalty: penaltyScore
+      }
     };
   };
   // 1. ATR (simple 14-period using closes for speed)
@@ -1847,29 +1766,16 @@ CONFIDENCE: [0-100 based on rules above]
         if (currentPrice <= 0) return stock;
 
         const newAllocation = (stock.allocation || 0) + additionalAmount;
-
-        if (stock.currentPosition) {
-          const oldShares = stock.currentPosition.shares || 0;
-          const oldEntryPrice = stock.currentPosition.entryPrice || 0;
-          const oldCost = oldShares * oldEntryPrice;
-
-          const newShares = Math.floor(additionalAmount / currentPrice);
-          const newCost = newShares * currentPrice;
-
-          const totalShares = oldShares + newShares;
-          const newAverageEntryPrice = (oldCost + newCost) / totalShares;
-
-          return {
-            ...stock,
-            allocation: newAllocation,
-            currentPosition: {
-              ...stock.currentPosition,
-              shares: totalShares,
-              entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
-            }
-          };
-        }
-        return { ...stock, allocation: newAllocation };
+        return {
+          ...stock,
+          allocation: newAllocation,
+          lastAiDecision: {
+            action: 'Pending',
+            reason: 'Evaluating after new allocation...',
+            confidence: 0,
+            timestamp: new Date()
+          }
+        };
       }
       return stock;
     }));
@@ -1888,7 +1794,7 @@ CONFIDENCE: [0-100 based on rules above]
       const autoStock = autoStocks.find(s => s.symbol === symbol);
       if (!autoStock) return { shouldBuy: false, reason: "Stock not found" };
 
-      const investedSoFar = (autoStock.currentPosition?.shares || 0) * currentPrice;
+      const investedSoFar = (autoStock.currentPosition?.shares || 0) * (autoStock.currentPosition?.entryPrice || 0);
       const availableCash = (autoStock.allocation || 0) - investedSoFar;
 
       if (availableCash < currentPrice) {
@@ -1906,30 +1812,48 @@ CONFIDENCE: [0-100 based on rules above]
 
       const customGuidance = autoStock.customGuidance || "No special instruction.";
 
-      const prompt = `You are a disciplined, rules-based trading analyst. Evaluate whether to BUY ${symbol} right now.
+      const prompt = `You are a disciplined trading analyst assisting a systematic trading engine.
+
+The system already uses a Confluence Trading Score (CTS) to determine position sizing.
+Your role is NOT to decide position size, but to VALIDATE or BLOCK trades based on risk and context.
+
+CTS Zones (PRIMARY DRIVER):
+- 85+: Very Strong (large position)
+- 75–84: Strong (medium-large position)
+- 65–74: Moderate (medium position)
+- 55–64: Weak (small starter)
+- Below 55: Avoid
+
+Your Responsibilities:
+1. Start by stating the CTS score and its zone.
+2. Do NOT override CTS unless there is a strong, clear risk.
+3. Only recommend HOLD if there is a meaningful reason:
+   - Weak or deteriorating momentum
+   - Bearish MACD or RSI divergence
+   - Price below 200 EMA (weak trend)
+   - Choppy or unstable price action
+   - Any risk from user guidance
+4. If CTS is strong (75+), default to BUY unless there is a clear red flag.
+5. Be decisive but not overly cautious.
 
 Current Data:
-- CTS Score: ${ctsScore} (PRIMARY ANCHOR - very important)
-- Current Price: $${currentPrice.toFixed(2)}
-- RSI (14): ${lastRSI}
-- MACD: ${lastMACD} (Signal: ${lastSignal})
-- 200 EMA: ${ema200}
-- Recent 10 closes: ${recentCloses}
-- User Custom Guidance: ${customGuidance}
-
-Decision Rules:
-- CTS 85+ is VERY STRONG. Default to BUY unless there is a strong, specific reason not to.
-- CTS 70-84 is favorable. Lean toward Buy if indicators are neutral or positive.
-- You may recommend Hold only if there are clear red flags (RSI well below 50, strongly bearish MACD, poor recent price action, or obvious risk in custom guidance).
-- When CTS is high, be decisive. Do not be overly cautious.
+Stock: ${symbol}
+CTS Score: ${ctsScore}
+Price: $${currentPrice.toFixed(2)}
+RSI: ${lastRSI}
+MACD: ${lastMACD} (Signal: ${lastSignal})
+200 EMA: ${ema200}
+Recent closes: ${recentCloses}
+User Guidance: ${customGuidance}
+Position Status: ${autoStock.currentPosition ? 'Already in position (considering add)' : 'New position'}
 
 Format exactly:
 ACTION: Buy or Hold
-REASON: [3 sentences maximum. Start with CTS score and zone, then explain conviction.]
-TRADE THESIS: [1-2 sentence concise thesis]
+REASON: [2-3 sentences. Start with CTS score and zone, then validate or flag risks.]
+TRADE THESIS: [1 sentence]
 CONFIDENCE: [0-100]
 
-Decide now.`;
+      Decide now.`;
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -1950,16 +1874,22 @@ Decide now.`;
       const thesis = thesisMatch ? thesisMatch[1].trim() : 'Strong confluence detected.';
       const confidence = confMatch ? Number(confMatch[1]) : 60;
 
-      const shouldBuy = action === 'Buy' && ctsScore >= 70;
-
+      const shouldBuy = ctsScore >= 65 && action !== 'Hold';
+      const breakdown = indicatorData.breakdown;
       //console.log(`AI Decision for ${symbol}: ${action} (CTS: ${ctsScore}, Confidence: ${confidence})`);
-
+      const noTradeReasons = getNoTradeReasons(
+        ctsScore,
+        Number(lastRSI),
+        Number(lastMACD)
+      );
       return {
         shouldBuy,
         entryPrice: shouldBuy ? currentPrice : undefined,
         thesis: thesis.substring(0, 200),
         confidence,
-        ctsScore
+        ctsScore,
+        breakdown,
+        noTradeReasons
       };
 
     } catch (err) {
@@ -1981,26 +1911,44 @@ Decide now.`;
       const indicatorData = await getCtsForSymbol(symbol);
       const ctsScore = indicatorData.ctsScore;
 
-      const prompt = `You are a disciplined, rules-based trading analyst. Evaluate whether to SELL ${symbol} right now.
+      const prompt = `You are a disciplined trading risk manager working alongside a systematic trading engine.
+
+The system uses a Confluence Trading Score (CTS) as the primary signal for trend strength.
+Your role is to decide whether to EXIT (SELL) or HOLD based on risk, trend strength, and profit protection.
+
+CTS Zones:
+- 85+: Very Strong Trend (hold unless clear reversal)
+- 75–84: Strong Trend (hold, consider partial profit if extended)
+- 65–74: Moderate (monitor closely)
+- 55–64: Weak (consider exit if no momentum)
+- Below 55: Bearish (exit preferred)
 
 Current Position:
-- Entry Price: $${currentPosition.entryPrice.toFixed(2)}
-- Current Price: $${currentPrice.toFixed(2)}
-- Unrealized P&L: $${pnl.toFixed(2)} (${pnlPercent.toFixed(1)}%)
-- CTS Score: ${ctsScore}
+Stock: ${symbol}
+Entry Price: $${currentPosition.entryPrice.toFixed(2)}
+Current Price: $${currentPrice.toFixed(2)}
+Unrealized P&L: $${pnl.toFixed(2)} (${pnlPercent.toFixed(1)}%)
+CTS Score: ${ctsScore}
 
-Decision Rules:
-- Sell if profit target is reached, momentum is weakening, or there is clear risk.
-- Be willing to take profits on strong gains.
-- Recommend Sell if CTS has dropped significantly or there are bearish signals.
-- Consider volatility and overall market conditions.
+Guidelines:
+1. Always start reasoning with CTS score and its zone.
+2. CTS is the PRIMARY trend signal:
+   - If CTS < 55 → bias toward SELL
+   - If CTS > 75 → bias toward HOLD (let winner run)
+3. Protect capital:
+   - If PnL ≤ -6% and CTS is weak → SELL
+4. Protect profits:
+   - If strong profit (>8–12%) AND momentum weakens → SELL
+5. Do NOT sell strong trends too early:
+   - High CTS + positive PnL → HOLD unless clear reversal
+6. Only recommend HOLD if trend and structure still justify staying in.
 
 Format exactly:
 ACTION: Sell or Hold
-REASON: [3 sentences maximum]
+REASON: [2-3 sentences. Must start with CTS score and zone, then justify decision with PnL + trend context.]
 CONFIDENCE: [0-100]
 
-Decide now.`;
+      Decide now.`;
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -2018,8 +1966,13 @@ Decide now.`;
       const action = actionMatch ? actionMatch[1] : 'Hold';
       const reason = reasonMatch ? reasonMatch[1].trim() : '';
       const confidence = confMatch ? Number(confMatch[1]) : 50;
-
-      const shouldSell = action === 'Sell';
+      const takeProfit =
+        pnlPercent > 10 && ctsScore < 70;
+      const shouldSell =
+        action === 'Sell' ||
+        ctsScore < 50 ||
+        (pnlPercent <= -6 && ctsScore < 60) ||
+        takeProfit;
 
       //console.log(`Sell Decision for ${symbol}: ${action} (Confidence: ${confidence})`);
 
@@ -2049,95 +2002,68 @@ Decide now.`;
       console.log('🔄 Auto trade check running...');
 
       let hasChanges = false;
-      const currentStocks = [...autoStocks];   // Fresh copy every cycle
+     const currentStocks = [...autoStocksRef.current];
 
       for (let i = 0; i < currentStocks.length; i++) {
-        
         const stock = currentStocks[i];
+        const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
+        if (currentPrice <= 0) continue;
 
-        //console.log(`Evaluating ${stock.symbol} (status: ${stock.status}, allocation: $${stock.allocation || 0})`);
-        // === BUY / BUY MORE CHECK ===
-        // === BUY / BUY MORE CHECK ===
-        if (stock.status === 'idle' || stock.status === 'monitoring' || stock.status === 'in-position') {
-          const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
-          if (currentPrice <= 0) continue;
+        const investedSoFar =
+          (stock.currentPosition?.shares || 0) *
+          (stock.currentPosition?.entryPrice || 0);
 
-          const investedSoFar = (stock.currentPosition?.shares || 0) * (stock.currentPosition?.entryPrice || 0);
-          const availableCash = (stock.allocation || 0) - investedSoFar;
+        const availableCash = (stock.allocation || 0) - investedSoFar;
 
-          console.log(`[${stock.symbol}] investedSoFar: $${investedSoFar.toFixed(2)} | availableCash: $${availableCash.toFixed(2)}`);
+        const now = Date.now();
 
-          if (availableCash >= currentPrice) {
-            const buyResult = await evaluateStockForBuy(stock.symbol);
+        // ✅ Cooldown check (default 5 min)
+        const COOLDOWN_MS = 20 * 60 * 1000; // 2x loop (ideal) because useEffect run every 10 minutes, but this ensures we don't buy immediately after a sell if the loop runs faster than expected for any reason. It also prevents rapid-fire decisions in volatile conditions.
+        const lastSellTime = stock.lastSellTime || 0;
+        const inCooldown = now - lastSellTime < COOLDOWN_MS;
 
-            if (buyResult?.shouldBuy === true && buyResult.entryPrice) {
-              const sharesToBuy = Math.floor(availableCash / buyResult.entryPrice);
-              if (sharesToBuy < 1) continue;
+        // Count only sells (fix)
+        const sellCount = (stock.tradeHistory || []).filter((t: any) => t.type === 'sell').length;
 
-              // === CORRECT WEIGHTED AVERAGE ===
-              const oldShares = stock.currentPosition?.shares || 0;
-              const oldEntryPrice = stock.currentPosition?.entryPrice || 0;
-              const oldCost = oldShares * oldEntryPrice;
-              const newCost = sharesToBuy * buyResult.entryPrice;
-              const totalShares = oldShares + sharesToBuy;
-              const newAverageEntryPrice = (oldCost + newCost) / totalShares;
+        // =========================
+        // 🟢 CASE 1: IN POSITION
+        // =========================
+        if (stock.status === 'in-position' && stock.currentPosition) {
 
-              const newTradeEntry = {
-                id: Date.now().toString(),
-                type: stock.currentPosition ? 'buy_more' : 'buy',
-                time: new Date(),
-                shares: sharesToBuy,
-                price: buyResult.entryPrice,
-                amount: newCost,
-                reason: buyResult.thesis || "AI buy signal",
-                confidence: buyResult.confidence || 70
-              };
-
-              currentStocks[i] = {
-                ...stock,
-                status: 'in-position',
-                currentPosition: {
-                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
-                  shares: totalShares,
-                  entryTime: stock.currentPosition?.entryTime || new Date(),
-                  thesis: buyResult.thesis || "AI approved entry"
-                },
-                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
-              };
-
-              hasChanges = true;
-              addToAutoLog(`✅ AUTO ${stock.currentPosition ? 'BUY MORE' : 'BUY'} ${sharesToBuy} shares of ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`);
-            }
-          } else {
-            console.log(`Not enough cash for ${stock.symbol} ($${availableCash.toFixed(0)} available)`);
-          }
-        }
-
-        // === SELL CHECK ===
-        else if (stock.status === 'in-position' && stock.currentPosition) {
-          const toastId = toast.loading(`AI evaluating ${stock.symbol} to sell...`);
-          const sellDecision = await evaluateSellDecision(stock.symbol, stock.currentPosition, stock);
-          toast.dismiss(toastId);
+          // 🔥 STEP 1: SELL FIRST
+          const sellDecision = await evaluateSellDecision(
+            stock.symbol,
+            stock.currentPosition,
+            stock
+          );
 
           if (sellDecision?.shouldSell) {
-            const sellPrice = toNumber(quotes[stock.symbol]?.price);
-            const pnl = (sellPrice - stock.currentPosition.entryPrice) * stock.currentPosition.shares;
+            const sellPrice = currentPrice;
+            const pnl =
+              (sellPrice - stock.currentPosition.entryPrice) *
+              stock.currentPosition.shares;
 
-            const newHistory = [
-              ...(stock.tradeHistory || []),
-              {
-                id: Date.now().toString(),
-                type: 'sell',
-                time: new Date(),
-                shares: stock.currentPosition.shares,
-                price: sellPrice,
-                amount: sellPrice * stock.currentPosition.shares,
-                pnl: pnl,
-                reason: sellDecision.reason || "AI sell signal"
-              }
-            ];
+            const indicatorData = await getCtsForSymbol(stock.symbol);
 
-            // Compound profits if enabled
+            const newTradeEntry = {
+              id: Date.now().toString(),
+              type: 'sell',
+              time: new Date(),
+              shares: stock.currentPosition.shares,
+              price: sellPrice,
+              amount: sellPrice * stock.currentPosition.shares,
+              pnl,
+
+              reason: sellDecision.reason || "AI sell signal",
+              confidence: sellDecision.confidence || 60,
+
+              ctsScore: indicatorData?.ctsScore,
+              ctsBreakdown: indicatorData?.breakdown,
+
+              entryPrice: stock.currentPosition.entryPrice,
+              entryTime: stock.currentPosition.entryTime
+            };
+
             const newAllocation = stock.compoundProfits
               ? (stock.allocation || 0) + pnl
               : (stock.allocation || 0);
@@ -2145,17 +2071,183 @@ Decide now.`;
             currentStocks[i] = {
               ...stock,
               allocation: Math.max(newAllocation, 0),
-              status: stock.rinseRepeat && (stock.tradeHistory?.length || 0) < (stock.maxRepeats || 5)
-                ? 'monitoring'
-                : 'completed',
+
+              status:
+                stock.rinseRepeat && sellCount < (stock.maxRepeats || 5)
+                  ? 'monitoring'
+                  : 'completed',
+
               currentPosition: null,
-              tradeHistory: newHistory
+
+              lastSellTime: now, // 🔥 cooldown anchor
+
+              lastAiDecision: {
+                action: 'Sell',
+                reason: sellDecision.reason || "AI sell signal",
+                confidence: sellDecision.confidence || 60,
+                timestamp: new Date(),
+                ctsBreakdown: indicatorData?.breakdown
+              },
+
+              tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
             };
 
             hasChanges = true;
-            toast.success(`Sold ${stock.symbol} | P&L: $${pnl.toFixed(2)}`, {
-              description: sellDecision.reason
-            });
+
+            addToAutoLog(
+              `🔴 AUTO SELL ${stock.symbol} @ $${sellPrice.toFixed(2)} | PnL: $${pnl.toFixed(2)}`
+            );
+
+            continue; // 🚨 CRITICAL: skip buy after sell
+          }
+
+          // 🔥 STEP 2: BUY MORE (only if NOT selling + NOT in cooldown)
+          if (!inCooldown && availableCash >= currentPrice) {
+            const buyResult = await evaluateStockForBuy(stock.symbol);
+
+            if (buyResult?.shouldBuy && buyResult.entryPrice) {
+              const capitalToUse = getSmartPositionSize(
+                buyResult.ctsScore,
+                availableCash,
+                investedSoFar,
+                stock.allocation || 0
+              );
+
+              const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
+              if (sharesToBuy < 1) continue;
+              if (capitalToUse < buyResult.entryPrice * 0.8) continue; // ensure we're using enough capital to justify the trade, skip noisey trades
+
+              const oldShares = stock.currentPosition.shares || 0;
+              const oldEntryPrice = stock.currentPosition.entryPrice || 0;
+
+              const oldCost = oldShares * oldEntryPrice;
+              const newCost = sharesToBuy * buyResult.entryPrice;
+
+              const totalShares = oldShares + sharesToBuy;
+              const newAverageEntryPrice = (oldCost + newCost) / totalShares;
+
+              const newTradeEntry = {
+                id: Date.now().toString(),
+                type: 'buy_more',
+                time: new Date(),
+                shares: sharesToBuy,
+                price: buyResult.entryPrice,
+                amount: newCost,
+
+                reason: buyResult.thesis || "AI buy signal",
+                confidence: buyResult.confidence || 70,
+
+                ctsScore: buyResult.ctsScore,
+                ctsBreakdown: buyResult.breakdown,
+                noTradeReasons: buyResult.noTradeReasons || []
+              };
+
+              currentStocks[i] = {
+                ...stock,
+                currentPosition: {
+                  ...stock.currentPosition,
+                  shares: totalShares,
+                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4))
+                },
+
+                lastAiDecision: {
+                  action: 'Buy More',
+                  reason: buyResult.thesis || "Scaling into strength",
+                  confidence: buyResult.confidence || 70,
+                  timestamp: new Date(),
+                  ctsBreakdown: buyResult.breakdown,
+                  noTradeReasons: buyResult.noTradeReasons || []
+                },
+
+                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
+              };
+
+              hasChanges = true;
+
+              addToAutoLog(
+                `🟢 AUTO BUY MORE ${sharesToBuy} ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`
+              );
+            } else {
+              // 🔥 NO TRADE REASON TRACKING
+              currentStocks[i] = {
+                ...stock,
+                lastAiDecision: {
+                  action: 'Hold',
+                  reason: buyResult?.noTradeReasons?.join(', ') || "No strong signal",
+                  confidence: buyResult?.confidence || 50,
+                  timestamp: new Date()
+                }
+              };
+            }
+          }
+        }
+
+        // =========================
+        // 🔵 CASE 2: NOT IN POSITION
+        // =========================
+        else if (stock.status === 'idle' || stock.status === 'monitoring') {
+
+          if (inCooldown) continue;
+
+          if (availableCash >= currentPrice) {
+            const buyResult = await evaluateStockForBuy(stock.symbol);
+
+            if (buyResult?.shouldBuy && buyResult.entryPrice) {
+              const capitalToUse = getSmartPositionSize(
+                buyResult.ctsScore,
+                availableCash,
+                0,
+                stock.allocation || 0
+              );
+
+              const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
+              if (sharesToBuy < 1) continue;
+              if (capitalToUse < buyResult.entryPrice * 0.8) continue; // ensure we're using enough capital to justify the trade, skip noisey trades
+
+              const newTradeEntry = {
+                id: Date.now().toString(),
+                type: 'buy',
+                time: new Date(),
+                shares: sharesToBuy,
+                price: buyResult.entryPrice,
+                amount: sharesToBuy * buyResult.entryPrice,
+
+                reason: buyResult.thesis || "AI buy signal",
+                confidence: buyResult.confidence || 70,
+                positionSizePercent: capitalToUse / (stock.allocation || 1),
+                ctsScore: buyResult.ctsScore,
+                ctsBreakdown: buyResult.breakdown,
+                noTradeReasons: buyResult.noTradeReasons || []
+              };
+
+              currentStocks[i] = {
+                ...stock,
+                status: 'in-position',
+
+                currentPosition: {
+                  entryPrice: buyResult.entryPrice,
+                  shares: sharesToBuy,
+                  entryTime: new Date(),
+                  thesis: buyResult.thesis
+                },
+
+                lastAiDecision: {
+                  action: 'Buy',
+                  reason: buyResult.thesis,
+                  confidence: buyResult.confidence,
+                  timestamp: new Date(),
+                  ctsBreakdown: buyResult.breakdown
+                },
+
+                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
+              };
+
+              hasChanges = true;
+
+              addToAutoLog(
+                `🟢 AUTO BUY ${sharesToBuy} ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`
+              );
+            }
           }
         }
       }
@@ -2164,7 +2256,7 @@ Decide now.`;
         console.log('💾 Updating autoStocks after trade(s)');
         setAutoStocks(currentStocks);
       }
-    }, 45000); // 45 seconds
+    }, 1000000); // 10 mins
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
@@ -2210,12 +2302,71 @@ Decide now.`;
       return stock;
     }));
   };
+
+  useEffect(() => {
+  autoStocksRef.current = autoStocks;
+}, [autoStocks]);
+
+useEffect(() => {
+  quotesRef.current = quotes;
+}, [quotes]);
+
+  // =========================
   // helper
+  // =========================
+  // Safe number parsing with fallback
   const toNumber = (value: string | number | undefined): number => {
     if (value === undefined || value === null) return 0;
     const num = typeof value === 'string' ? parseFloat(value) : value;
     return isNaN(num) ? 0 : num;
   };
+
+  // Get top 2 reasons for not buying (for user feedback)
+  const getNoTradeReasons = (ctsScore: number, rsi: any, macd: any) => {
+    const reasons: string[] = [];
+
+    if (ctsScore < 65) reasons.push('CTS below buy threshold');
+
+    if (typeof rsi === 'number' && rsi < 50)
+      reasons.push('Weak momentum (RSI < 50)');
+
+    if (typeof macd === 'number' && macd < 0)
+      reasons.push('Bearish MACD');
+
+    return reasons.slice(0, 2); // keep clean
+  };
+
+  // Position sizing based on conviction (CTS score)
+  const getPositionSizePercent = (cts: number) => {
+    if (cts >= 85) return 1.0;     // full conviction
+    if (cts >= 75) return 0.75;    // strong
+    if (cts >= 65) return 0.5;     // moderate
+    if (cts >= 55) return 0.3;     // starter
+    return 0.15;                   // probe
+  };
+
+  // Smart position sizing that also considers how much capital is already invested in the stock to prevent overloading on a single name. This allows for more aggressive scaling on high conviction picks while maintaining overall portfolio balance.
+  const getSmartPositionSize = (
+    cts: number,
+    availableCash: number,
+    investedSoFar: number,
+    totalAllocation: number
+  ) => {
+    const basePercent = getPositionSizePercent(cts);
+
+    // How much already used
+    const usedPercent = totalAllocation > 0 ? investedSoFar / totalAllocation : 0;
+
+    // Remaining capacity (prevents overloading)
+    const remainingPercent = Math.max(0, 1 - usedPercent);
+
+    // Scale only part of remaining capital
+    const finalPercent = Math.min(basePercent, remainingPercent);
+
+    return availableCash * finalPercent;
+  };
+
+  // end of helper functions
   // Check if US stock market is open (including major holidays)
   const isMarketOpen = (): boolean => {
     const now = new Date();
@@ -2274,7 +2425,7 @@ Decide now.`;
 
       const fromDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const toDate = new Date().toISOString().split('T')[0];
-
+      
       const res = await fetch(
         `/api/polygon-candles?symbol=${symbol}&multiplier=1&timespan=day&from=${fromDate}&to=${toDate}`
       );
@@ -2317,7 +2468,7 @@ Decide now.`;
       );
 
       const ctsScore = typeof result?.finalScore === 'number' ? result.finalScore : 55;
-
+      const breakdown = result?.ctsBreakdown || null;
       // Ultra-safe extraction
       // Ultra-safe extraction with type assertion
       const lastRSI = typeof result?.lastRSI === 'number' ? result.lastRSI.toFixed(2) : 'N/A';
@@ -2335,7 +2486,8 @@ Decide now.`;
         macd: lastMACD,
         signal: lastSignal,
         ema200: ema200Last,
-        recentCloses: recentClosesStr
+        recentCloses: recentClosesStr,
+        breakdown
       };
 
     } catch (err) {
@@ -2958,7 +3110,7 @@ Decide now.`;
                               ? (stock.currentPosition.shares || 0) * (stock.currentPosition.entryPrice || 0)
                               : 0;
 
-                            const remainingCash = Math.max(0, (stock.allocation || 0) - invested);   // Prevent negative values
+                            const Available$ = Math.max(0, (stock.allocation || 0) - invested);   // Prevent negative values
                             const unrealizedPnL = stock.currentPosition
                               ? (currentPrice - stock.currentPosition.entryPrice) * stock.currentPosition.shares
                               : 0;
@@ -2992,8 +3144,8 @@ Decide now.`;
 
                                     {/* Subtle indicators */}
                                     <div className="flex gap-2 text-[10px] text-gray-500">
-                                      {stock.compoundProfits && <span className="bg-emerald-900/50 px-2 py-0.5 rounded">♻️ Compound</span>}
-                                      {stock.rinseRepeat && <span className="bg-blue-900/50 px-2 py-0.5 rounded">🔄 Repeat ×{stock.maxRepeats}</span>}
+                                      {stock.compoundProfits && <span className="bg-emerald-900/50 px-2 py-0.3 rounded-2xl">♻️ On</span>}
+                                      {stock.rinseRepeat && <span className="bg-blue-900/50 px-2 py-0.5 rounded-2xl">🔄 On ×{stock.maxRepeats}</span>}
                                     </div>
                                   </div>
                                 </div>
@@ -3015,9 +3167,9 @@ Decide now.`;
                                     </div>
                                   </div>
                                   <div>
-                                    <div className="text-gray-400 text-xs">Remaining</div>
-                                    <div className={`font-mono ${remainingCash > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                      ${remainingCash.toFixed(0)}
+                                    <div className="text-gray-400 text-xs">Available$</div>
+                                    <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                      ${Available$.toFixed(0)}
                                     </div>
                                   </div>
                                   {/* <div>
@@ -3025,7 +3177,54 @@ Decide now.`;
                                       <div className="font-mono">${(stock.currentPosition ? stock.currentPosition.shares * currentPrice : 0).toFixed(0)}</div>
                                     </div> */}
                                 </div>
+                          
+                                {/* AI Decision */}
+                                {stock.lastAiDecision && (
+                                  <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-gray-400">AI Decision</span>
+                                      <span className={`font-medium ${stock.lastAiDecision.action === 'Buy'
+                                          ? 'text-emerald-400'
+                                          : 'text-amber-400'
+                                        }`}>
+                                        {stock.lastAiDecision.action} ({stock.lastAiDecision.confidence}%)
+                                      </span>
+                                    </div>
+                                    <div className="text-gray-300 mt-1 line-clamp-2">
+                                      {stock.lastAiDecision.reason}
+                                    </div>
+                                    <div className="text-[10px] text-gray-500 mt-1">
+                                      {new Date(stock.lastAiDecision.timestamp).toLocaleTimeString()}
+                                    </div>
+                                  </div>
+                                )}
+      
+                                {/* Luckmi Breakdown */}
+                                {stock.ctsBreakdown && (
+                                  <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
+                                    <div className="text-gray-400 mb-1">Luckmi Breakdown</div>
+                                    <div className="grid grid-cols-2 gap-1 text-gray-300">
+                                      <div>Trend: {stock.ctsBreakdown.trend}</div>
+                                      <div>EMA: {stock.ctsBreakdown.ema}</div>
+                                      <div>Momentum: {stock.ctsBreakdown.momentum}</div>
+                                      <div>Volume: {stock.ctsBreakdown.volume}</div>
+                                      <div>Rel Strength: {stock.ctsBreakdown.relative}</div>
+                                      <div className="text-red-400">Penalty: {stock.ctsBreakdown.penalty}</div>
+                                    </div>
+                                  </div>
+                                )}
 
+                                {/* No Trade Reasons */}
+                                {stock.lastAiDecision?.action === 'Hold' && stock.noTradeReasons?.length > 0 && (
+                                  <div className="mt-2 text-xs text-amber-400">
+                                    No Trade Reason:
+                                    <ul className="list-disc ml-4 mt-1 text-gray-300">
+                                      {stock.noTradeReasons.map((r: string, i: number) => (
+                                        <li key={i}>{r}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                                 {/* Action Buttons */}
                                 <div className="mt-6 flex gap-3">
                                   <button
@@ -3040,7 +3239,7 @@ Decide now.`;
                                     }}
                                     className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-2xl text-sm font-medium transition-colors"
                                   >
-                                    Buy More
+                                    Add Capital
                                   </button>
 
                                   {stock.status === 'in-position' && (
@@ -3234,6 +3433,7 @@ Decide now.`;
                           style={{ width: `${finalCtsScore}%` }}
                         />
                       </div>
+                      
                       <div className="text-xs text-gray-400 leading-relaxed">
                         Luckmi Score measures how strong the overall setup is by combining technical signals,
                         momentum, and market structure. Higher scores mean better probability of a successful move.
@@ -3246,7 +3446,19 @@ Decide now.`;
                           Short-term views can be more optimistic. Always check Daily view.
                         </span>
                       </div>
-
+                      {filtersApplied.ctsBreakdown && (
+                        <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
+                          <div className="text-gray-400 mb-1">CTS Breakdown</div>
+                          <div className="grid grid-cols-2 gap-1 text-gray-300">
+                            <div>Trend: {filtersApplied.ctsBreakdown.trend}</div>
+                            <div>EMA: {filtersApplied.ctsBreakdown.ema}</div>
+                            <div>Momentum: {filtersApplied.ctsBreakdown.momentum}</div>
+                            <div>Volume: {filtersApplied.ctsBreakdown.volume}</div>
+                            <div>Rel Strength: {filtersApplied.ctsBreakdown.relative}</div>
+                            <div className="text-red-400">Penalty: {filtersApplied.ctsBreakdown.penalty}</div>
+                          </div>
+                        </div>
+                      )}
                       {/* Why this score? */}
                       <details
                         className="mt-5 text-sm"
@@ -3258,18 +3470,6 @@ Decide now.`;
                         <summary className="cursor-pointer text-blue-400 hover:text-blue-300 font-medium">
                           How Luckmi Score works →
                         </summary>
-                        <div className="mt-4 text-xs text-gray-300 bg-black/30 p-5 rounded-2xl space-y-3">
-                          <div><strong>Raw Base Score:</strong> {rawBaseScore} — strength of technical signals before filters</div>
-                          <div><strong>Volatility filter:</strong> {filtersApplied?.volatility ? 'Applied (reduced score due to low movement)' : 'Not applied'}</div>
-                          <div><strong>Structure filter:</strong> {filtersApplied?.structure ? 'Applied' : 'Not applied'}</div>
-                          <div><strong>Relative Strength:</strong> {filtersApplied?.relativeStrength ? 'Applied' : 'Not applied'}</div>
-
-                          <div className="pt-3 border-t border-gray-700 text-emerald-300 text-[13px]">
-                            Higher score = stronger confluence of bullish factors.<br />
-                            Scores above 65 indicate Buy Zone potential.<br />
-                            Scores below 55 suggest caution (Avoid or Sell Zone).
-                          </div>
-                        </div>
                       </details>
                     </div>
                   )}
@@ -4010,7 +4210,7 @@ Decide now.`;
                 <p className="text-sm text-gray-400 mt-1">AI will monitor and trade this stock</p>
               </div>
 
-              <div className="p-6 space-y-6">
+              <div className="p-6 space-y-4">
 
                 {/* Stock Symbol */}
                 <div>
@@ -4020,7 +4220,7 @@ Decide now.`;
                     value={newAutoSymbol}
                     onChange={(e) => setNewAutoSymbol(e.target.value.toUpperCase())}
                     placeholder="e.g. TSLA"
-                    className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white text-lg font-medium"
+                    className="w-full px-4 py-2 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white text-lg font-medium"
                     maxLength={10}
                   />
                 </div>
@@ -4033,7 +4233,7 @@ Decide now.`;
                     value={newAllocation}
                     onChange={(e) => setNewAllocation(Number(e.target.value) || 0)}
                     placeholder="5000"
-                    className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white text-lg font-mono"
+                    className="w-full px-4 py-2 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white text-lg font-mono"
                     min="100"
                   />
                 </div>
@@ -4041,12 +4241,12 @@ Decide now.`;
                 {/* Compound Profits Toggle */}
                 <div className="flex items-center justify-between bg-[#1a1f2e] p-4 rounded-2xl">
                   <div>
-                    <div className="font-medium">Compound Profits</div>
+                    <div className="font-medium">♻️ Compound Profits</div>
                     <div className="text-xs text-gray-400">Automatically add realized profits back to allocation</div>
                   </div>
                   <button
                     onClick={() => setCompoundProfits(!compoundProfits)}
-                    className={`w-14 h-8 rounded-full transition-colors flex items-center px-1 ${compoundProfits ? 'bg-emerald-500' : 'bg-gray-600'
+                    className={`w-14 h-6 rounded-full transition-colors flex items-center px-1 ${compoundProfits ? 'bg-emerald-500' : 'bg-gray-600'
                       }`}
                   >
                     <div className={`w-6 h-6 bg-white rounded-full transition-transform ${compoundProfits ? 'translate-x-6' : 'translate-x-0'}`} />
@@ -4059,10 +4259,10 @@ Decide now.`;
                     type="checkbox"
                     checked={rinseRepeat}
                     onChange={(e) => setRinseRepeat(e.target.checked)}
-                    className="w-5 h-5 accent-blue-500"
+                    className="w-5 h-4 accent-blue-500"
                   />
                   <div>
-                    <div className="font-medium">Rinse & Repeat</div>
+                    <div className="font-medium">🔄 Rinse & Repeat</div>
                     <div className="text-xs text-gray-400">Continue trading this stock after each sell</div>
                   </div>
                 </div>
@@ -4074,7 +4274,7 @@ Decide now.`;
                     <select
                       value={maxRepeats}
                       onChange={(e) => setMaxRepeats(Number(e.target.value))}
-                      className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white"
+                      className="w-full px-4 py-2 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white"
                     >
                       {[3, 5, 7, 10].map(n => (
                         <option key={n} value={n}>{n} times</option>
@@ -4090,7 +4290,7 @@ Decide now.`;
                     value={customGuidance}
                     onChange={(e) => setCustomGuidance(e.target.value)}
                     placeholder="e.g. Be more aggressive on momentum, avoid trading during earnings"
-                    className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white h-24 resize-y"
+                    className="w-full px-4 py-2 bg-[#1a1f2e] border border-gray-700 rounded-2xl focus:outline-none focus:border-blue-500 text-white h-20 resize-y"
                   />
                 </div>
 
@@ -4109,7 +4309,7 @@ Decide now.`;
                     setMaxRepeats(5);
                     setCustomGuidance('');
                   }}
-                  className="flex-1 py-3.5 text-gray-400 hover:text-white font-medium rounded-2xl transition-colors"
+                  className="flex-1 py-2.5 text-gray-400 hover:text-white font-medium rounded-2xl transition-colors"
                 >
                   Cancel
                 </button>
@@ -4145,7 +4345,7 @@ Decide now.`;
                     setCustomGuidance('');
                   }}
                   disabled={!newAutoSymbol.trim()}
-                  className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 rounded-2xl font-medium transition-colors"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 rounded-2xl font-medium transition-colors"
                 >
                   Add to Auto Trading
                 </button>
@@ -4213,7 +4413,7 @@ Decide now.`;
                     This will increase the total capital the AI can use for {selectedAutoStock.symbol}
                   </p>
                 </div>
-
+                          
               </div>
 
               {/* Footer Buttons */}
@@ -4238,16 +4438,77 @@ Decide now.`;
                       alert("Please enter a valid amount greater than 0");
                       return;
                     }
+                    const symbol = selectedAutoStock.symbol;
+                    const amount = buyMoreAmount;
 
-                    // Safe call
-                    buyMore(selectedAutoStock.symbol, buyMoreAmount);
-
+                    buyMore(symbol, amount);
                     setShowBuyMoreModal(false);
-                    setBuyMoreAmount(0);
+                    // 🔥 NEW: Immediate AI evaluation
+                    setTimeout(async () => {
+                      const result = await evaluateStockForBuy(symbol);
+
+                      setAutoStocks(prev =>
+                        prev.map(stock =>
+                          stock.symbol === symbol
+                            ? {
+                              ...stock,
+                              lastAiDecision: {
+                                action: result?.shouldBuy ? 'Buy' : 'Hold',
+                                reason: result?.thesis || result?.reason || 'No clear signal',
+                                confidence: result?.confidence || 60,
+                                timestamp: new Date(),
+                                ctsBreakdown: result?.breakdown,
+                                noTradeReason: result?.noTradeReasons
+                              }
+                            }
+                            : stock
+                        )
+                      );
+
+                    // 🔥 If strong buy → execute immediately
+                    if (result?.shouldBuy && result.entryPrice) {
+                      setAutoStocks(prev =>
+                        prev.map(stock => {
+                          if (stock.symbol !== symbol) return stock;
+
+                          const availableCash = stock.allocation || 0;
+                          const sharesToBuy = Math.floor(availableCash / (result.entryPrice ?? 0));
+
+                          if (sharesToBuy < 1) return stock;
+                          
+                          return {
+                            ...stock,
+                            status: 'in-position',
+                            currentPosition: {
+                              shares: sharesToBuy,
+                              entryPrice: result.entryPrice,
+                              entryTime: new Date(),
+                              thesis: result.thesis
+                            },
+                            tradeHistory: [
+                              ...(stock.tradeHistory || []),
+                              {
+                                id: Date.now().toString(),
+                                type: 'buy',
+                                time: new Date(),
+                                shares: sharesToBuy,
+                                price: result.entryPrice,
+                                amount: sharesToBuy * (result.entryPrice ?? 0),
+                                reason: result.thesis,
+                                confidence: result.confidence
+                              }
+                            ]
+                          };
+                        })
+                      );                      
+                      addToAutoLog(`⚡ INSTANT BUY ${symbol} after Buy More — AI confirmed`);                      
+                    }
+                    toast.success(`$${amount} added. AI evaluating ${symbol}...`);
+                  }, 300); // slight delay to ensure state update                    
                   }}
                   className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-2xl font-medium transition-colors"
                 >
-                  Confirm Buy More
+                  Confirm Add Capital
                 </button>
               </div>
             </div>
