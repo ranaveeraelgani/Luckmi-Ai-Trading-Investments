@@ -25,6 +25,8 @@ import { number, symbol } from 'zod';
 import { createClient } from '@/utils/supabase'
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { toast } from 'sonner';
+import { calculateFinalCTS } from '../lib/indicators/calculateFinalCTS';
+import { runBacktest } from '../lib/backtest/runBacktest';
 // Register core Chart.js + candlestick (safe on server)
 ChartJS.register(
   CategoryScale,
@@ -96,6 +98,7 @@ export default function ChatPage() {
   const [finalCtsScore, setFinalCtsScore] = useState<number | null>(null);
   const [rawBaseScore, setRawBaseScore] = useState<number | null>(null);
   const [filtersApplied, setFiltersApplied] = useState<any>({});
+  const [ctsBreakdowns, setCtsBreakdowns] = useState<Record<string, any>>({});
   const [tradeRecommendation, setTradeRecommendation] = useState<'Strong Buy' | 'Buy' | 'Hold' | 'Avoid' | 'Sell'>('Hold');  // Register zoom plugin only in browser
   const [watchlistCtsScores, setWatchlistCtsScores] = useState<Record<string, number>>({});
   const [consensusStatus, setConsensusStatus] = useState<'Strong Agreement' | 'Mild Agreement' | 'Conflict' | null>(null);
@@ -812,11 +815,23 @@ export default function ChatPage() {
         });
         setRawBaseScore(ctsResult.rawBaseScore);
         setTradeRecommendation(ctsResult.recommendation as 'Strong Buy' | 'Buy' | 'Hold' | 'Avoid' | 'Sell');
-        setFiltersApplied(ctsResult.ctsBreakdown || {});
+        setCtsBreakdowns(prev => ({
+          ...prev,
+          [selectedStock]: ctsResult.ctsBreakdown || {}
+        }));
         //console.log('CTS Breakdown:', ctsResult.ctsBreakdown, filtersApplied);
         //console.log(`CTS updated for ${selectedStock} (${timeRange} ${resolution}): ${ctsResult.finalScore}`);
 
         // 4. Trigger AI ONLY ONCE after everything is ready
+
+        // backtest cts score
+        // const backtestResult = runBacktest(ohlc, closes, slicedData.v);
+        // console.log("Return:", backtestResult.totalReturn);
+        // console.log("Win rate:", backtestResult.winRate);
+        // console.log("Max DD:", backtestResult.maxDrawdown);
+        // console.log("Trades:", backtestResult.trades);
+        ///----------------
+
         setTimeout(() => {
           const currentCts = ctsResult.finalScore;
           const currentStock = selectedStock;
@@ -1263,381 +1278,9 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     return highs > lows + 2 ? 15 : highs > lows ? 7 : 0;
   };
 
-  const calculateNewsSentiment = (news: any[]) => {
-    if (!news || news.length === 0) return 8; // neutral base
 
-    let score = 8; // start with neutral base
 
-    const positiveKeywords = [
-      'beat', 'raise', 'upgrade', 'strong', 'buy', 'bullish',
-      'record', 'growth', 'outperform', 'surge', 'rally', 'positive'
-    ];
 
-    const negativeKeywords = [
-      'miss', 'cut', 'downgrade', 'weak', 'sell', 'bearish',
-      'decline', 'drop', 'loss', 'disappoint', 'negative', 'warn'
-    ];
-
-    news.forEach(n => {
-      const text = (n.headline + ' ' + (n.summary || '')).toLowerCase();
-
-      // Count positive matches
-      const posMatches = positiveKeywords.filter(w => text.includes(w)).length;
-      score += posMatches * 4;   // +4 per strong positive keyword
-
-      // Count negative matches
-      const negMatches = negativeKeywords.filter(w => text.includes(w)).length;
-      score -= negMatches * 5;   // -5 per negative keyword (stronger penalty)
-    });
-
-    // Cap the sentiment contribution
-    score = Math.max(-10, Math.min(20, score));
-
-    return score;
-  };
-
-  // MAIN SCORER – exact to your 15-factor model
-  const calculateFinalCTS = (
-    ohlc: any[],
-    closes: number[],
-    macdData: any[] = [],
-    rsiData: number[] = [],
-    ema200Data: number[] = [],
-    volumes: number[] = [],
-    breakout: any = null,
-    news: any[] = [],
-    spyCloses: number[] = []
-  ) => {
-
-    if (closes.length < 30) {
-      return {
-        finalScore: 50,
-        rawBaseScore: 50,
-        recommendation: 'Hold',
-        filtersApplied: {},
-        lastRSI: 50,
-        lastMACD: 'N/A',
-        lastSignal: 'N/A',
-        ema200Last: 'N/A',
-        recentCloses: closes.slice(-10),
-        lastClose: closes.at(-1)
-      };
-    }
-
-    let rawBaseScore = 50;
-    let trendScore = 0;
-    let emaScore = 0;
-    let momentumScore = 0;
-    let relativeScore = 0;
-    let penaltyScore = 0;
-    const lastClose = toNumber(closes.at(-1));
-    const ema200Last = toNumber(ema200Data.length > 0 ? ema200Data.at(-1) : lastClose);
-    const lastRSI = toNumber(rsiData.length > 0 ? rsiData.at(-1) : 50);
-
-    // -------------------
-    // 1. TREND (balanced)
-    // -------------------
-    const isAboveEMA200 = lastClose > ema200Last;
-    emaScore = isAboveEMA200 ? 8 : -8;
-    rawBaseScore += emaScore;
-
-    const isUptrend = lastClose > toNumber(closes.at(-20));
-    trendScore = isUptrend ? 6 : -6;
-    rawBaseScore += trendScore;
-
-    // -------------------
-    // 2. MOMENTUM (RSI improved)
-    // -------------------
-    let momentum = 0;
-
-    if (lastRSI >= 55 && lastRSI <= 65) momentum = 8;
-    else if (lastRSI > 65 && lastRSI <= 75) momentum = 5;
-    else if (lastRSI > 75) momentum = -4;
-    else if (lastRSI < 45) momentum = -6;
-    momentumScore = momentum;
-    rawBaseScore += momentumScore;
-
-    if (lastRSI >= 55 && lastRSI <= 65 && isAboveEMA200) {
-      rawBaseScore += 3; // strong trend continuation zone
-    }
-    // -------------------
-    // 3. MACD (added properly)
-    // -------------------
-    const macdResult = calculateMACD(closes);
-
-    let macdScore = 0;
-
-    if (macdResult.signal.length > 1) {
-      const macdLine = macdResult.macd.slice(-macdResult.signal.length);
-
-      const curr = {
-        macd: macdLine.at(-1),
-        signal: macdResult.signal.at(-1),
-        histogram: macdResult.histogram.at(-1)
-      };
-
-      const prev = {
-        macd: macdLine.at(-2),
-        signal: macdResult.signal.at(-2),
-        histogram: macdResult.histogram.at(-2)
-      };
-
-      if (
-        curr.macd !== undefined &&
-        curr.signal !== undefined &&
-        curr.histogram !== undefined &&
-        prev.macd !== undefined &&
-        prev.signal !== undefined &&
-        prev.histogram !== undefined
-      ) {
-
-        // -------------------
-        // 1. Trend Bias
-        // -------------------
-        if (curr.macd > 0) macdScore += 3;
-        else macdScore -= 3;
-
-        // -------------------
-        // 2. Crossover
-        // -------------------
-        if (curr.macd > curr.signal) macdScore += 3;
-        else macdScore -= 3;
-
-        // -------------------
-        // 3. Momentum (Histogram slope)
-        // -------------------
-        if (curr.histogram > prev.histogram) macdScore += 2;
-        else macdScore -= 2;
-
-        // -------------------
-        // 4. Strong crossover bonus (optional but good)
-        // -------------------
-        if (
-          prev.macd < prev.signal &&
-          curr.macd > curr.signal &&
-          curr.macd > 0
-        ) {
-          macdScore += 2;
-        }
-
-        // -------------------
-        // 5. Noise filter (sideways market)
-        // -------------------
-        if (Math.abs(curr.macd) < 0.1) {
-          macdScore *= 0.5;
-        }
-      }
-    }
-    rawBaseScore += macdScore;
-
-    // -------------------
-    // 4. VOLUME (fixed bias)
-    // -------------------
-    let volumeScore = 0;
-
-    if (volumes.length >= 20) {
-      const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-      const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
-
-      if (recentVol > avgVol * 1.5) volumeScore = 6;
-      else if (recentVol < avgVol * 0.8) volumeScore = -4;
-    }
-
-    rawBaseScore += volumeScore;
-
-    // -------------------
-    // 5. NEWS (capped)
-    // -------------------
-    const newsScore = Math.max(-5, Math.min(5, calculateNewsSentiment(news)));
-    rawBaseScore += newsScore;
-
-    // -------------------
-    // 6. RELATIVE STRENGTH
-    // -------------------
-    if (spyCloses.length > 15 && closes.length > 15) {
-      const stockReturn = lastClose / toNumber(closes.at(-16)) - 1;
-      const spyReturn = toNumber(spyCloses.at(-1)) / toNumber(spyCloses.at(-16)) - 1;
-
-      const relative = stockReturn - spyReturn;
-
-      if (relative > 0.05) relativeScore += 6;
-      else if (relative < -0.05) relativeScore -= 6;
-      rawBaseScore += relativeScore;
-    }
-
-    // -------------------
-    // 7. CHOP PENALTY (reduced)
-    // -------------------
-    const range10 = Math.max(...closes.slice(-10)) - Math.min(...closes.slice(-10));
-    const isChoppy = range10 < 2;
-
-    if (isChoppy) penaltyScore -= 5;
-    rawBaseScore += penaltyScore;
-
-    // -------------------
-    // Timeframe bonus (reduced)
-    // -------------------
-    const isShortTerm = closes.length < 80;
-    if (!isShortTerm) rawBaseScore += 3;
-
-    // -------------------
-    // divergence score
-    // -------------------
-    let divergenceScore = 0;
-
-    if (closes.length > 30 && rsiData.length > 30 && macdResult.macd.length > 30) {
-
-      const lookback = 14;
-
-      const priceRecent = closes.slice(-lookback);
-      const rsiRecent = rsiData.slice(-lookback);
-
-      const macdLine = macdResult.macd.slice(-macdResult.signal.length);
-      const macdRecent = macdLine.slice(-lookback);
-
-      const priceLow1 = Math.min(...priceRecent.slice(0, lookback / 2));
-      const priceLow2 = Math.min(...priceRecent.slice(lookback / 2));
-
-      const rsiLow1 = Math.min(...rsiRecent.slice(0, lookback / 2));
-      const rsiLow2 = Math.min(...rsiRecent.slice(lookback / 2));
-
-      const macdLow1 = Math.min(...macdRecent.slice(0, lookback / 2));
-      const macdLow2 = Math.min(...macdRecent.slice(lookback / 2));
-
-      const priceHigh1 = Math.max(...priceRecent.slice(0, lookback / 2));
-      const priceHigh2 = Math.max(...priceRecent.slice(lookback / 2));
-
-      const rsiHigh1 = Math.max(...rsiRecent.slice(0, lookback / 2));
-      const rsiHigh2 = Math.max(...rsiRecent.slice(lookback / 2));
-
-      const macdHigh1 = Math.max(...macdRecent.slice(0, lookback / 2));
-      const macdHigh2 = Math.max(...macdRecent.slice(lookback / 2));
-
-      // Bullish RSI divergence
-      if (priceLow2 < priceLow1 && rsiLow2 > rsiLow1) {
-        divergenceScore += 4;
-      }
-
-      // Bullish MACD divergence
-      if (priceLow2 < priceLow1 && macdLow2 > macdLow1) {
-        divergenceScore += 3;
-      }
-
-      // Bearish RSI divergence
-      if (priceHigh2 > priceHigh1 && rsiHigh2 < rsiHigh1) {
-        divergenceScore -= 4;
-      }
-
-      // Bearish MACD divergence
-      if (priceHigh2 > priceHigh1 && macdHigh2 < macdHigh1) {
-        divergenceScore -= 3;
-      }
-    }
-    rawBaseScore += divergenceScore;
-
-    //-------------
-    // breakout score (new)
-    //-------------
-    let breakoutScore = 0;
-
-    if (closes.length > 20) {
-      const recentHigh = Math.max(...closes.slice(-20, -1));
-      const lastClose = toNumber(closes.at(-1));
-
-      const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-      const recentVol = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
-
-      const isBreakout = lastClose > recentHigh;
-      const strongVolume = recentVol > avgVol * 1.4;
-
-      if (isBreakout && strongVolume) breakoutScore += 8;     // strong breakout
-      else if (isBreakout) breakoutScore += 5;                // weak breakout
-    }
-    rawBaseScore += breakoutScore;
-    //---------------
-    // volatility score (new)
-    //---------------
-    let volatilityScore = 0;
-
-    const rangeRecent = Math.max(...closes.slice(-5)) - Math.min(...closes.slice(-5));
-    const rangePast = Math.max(...closes.slice(-20, -5)) - Math.min(...closes.slice(-20, -5));
-
-    if (rangeRecent > rangePast * 1.3) volatilityScore += 4;   // expansion
-    else if (rangeRecent < rangePast * 0.7) volatilityScore -= 3; // contraction
-
-    rawBaseScore += volatilityScore;
-
-    //-------------------
-    // market score (new)
-    //-------------------
-    let marketScore = 0;
-
-    if (spyCloses.length > 50) {
-      const spyEMA50 = spyCloses.slice(-50).reduce((a, b) => a + b, 0) / 50;
-      const spyLast = spyCloses.at(-1);
-
-      if (toNumber(spyLast) > spyEMA50) marketScore += 3;
-      else marketScore -= 4;
-    }
-    rawBaseScore += marketScore;
-
-    //-------------------
-    // exaustion score (new)
-    //-------------------
-    let exhaustionScore = 0;
-
-    const recentMove = (lastClose / toNumber(closes.at(-10))) - 1;
-
-    if (recentMove > 0.18 && lastRSI > 75) {
-      exhaustionScore -= 6; // overextended
-    }
-    rawBaseScore += exhaustionScore;
-    // -------------------
-    // FINAL SCORE
-    // -------------------
-    let finalScore = Math.round(rawBaseScore);
-    finalScore = Math.max(20, Math.min(95, finalScore));
-
-    const recommendation =
-      finalScore >= 80 ? 'Strong Buy' :
-        finalScore >= 65 ? 'Buy' :
-          finalScore >= 50 ? 'Hold' :
-            finalScore >= 35 ? 'Avoid' : 'Sell';
-
-    // -------------------
-    // MACD outputs (fixed)
-    // -------------------
-    const lastMACD = macdData.length > 0 ? macdData.at(-1) : 'N/A';
-    const lastSignal = macdData.length > 0 ? macdData.at(-1) : 'N/A'; // (replace if you store signal separately)
-
-    return {
-      finalScore,
-      rawBaseScore: Math.round(rawBaseScore),
-      recommendation,
-
-      filtersApplied: {
-        lowVolatility: isChoppy,
-        structure: !isUptrend
-      },
-
-      lastRSI: Math.round(lastRSI),
-
-      lastMACD: typeof lastMACD === 'number' ? lastMACD.toFixed(4) : 'N/A',
-      lastSignal: typeof lastSignal === 'number' ? lastSignal.toFixed(4) : 'N/A',
-
-      ema200Last: ema200Last ? ema200Last.toFixed(2) : 'N/A',
-      recentCloses: closes.slice(-10),
-      lastClose,
-      ctsBreakdown: {
-        trend: trendScore,
-        ema: emaScore,
-        momentum: momentumScore,
-        volume: volumeScore,
-        relative: relativeScore,
-        penalty: penaltyScore
-      }
-    };
-  };
   // 1. ATR (simple 14-period using closes for speed)
   const calculateATR = (closes: number[], period = 14): number => {
     if (closes.length < period + 1) return 0;
@@ -1846,7 +1489,7 @@ CTS Zones (PRIMARY DRIVER):
 - Below 55: Avoid
 
 Your Responsibilities:
-1. Start by stating the CTS score and its zone.
+1. Start by stating the CTS score and its zone for ${symbol}.
 2. Do NOT override CTS unless there is a strong, clear risk.
 3. Only recommend HOLD if there is a meaningful reason:
    - Weak or deteriorating momentum
@@ -1966,7 +1609,7 @@ Guidelines:
 
 Format exactly:
 ACTION: Sell or Hold
-REASON: [2-3 sentences. Must start with CTS score and zone, then justify decision with PnL + trend context.]
+REASON: [2-3 sentences. Must start with CTS score and zone for ${symbol}, then justify decision with PnL + trend context.]
 CONFIDENCE: [0-100]
 
       Decide now.`;
@@ -2467,6 +2110,16 @@ useEffect(() => {
         };
       }
 
+      const maxPoints = 500;
+      const startIndex = Math.max(0, data.t.length - maxPoints);
+              const slicedData = {
+          t: data.t.slice(startIndex),
+          o: data.o.slice(startIndex),
+          h: data.h.slice(startIndex),
+          l: data.l.slice(startIndex),
+          c: data.c.slice(startIndex),
+          v: data.v.slice(startIndex),
+        };
       const closes = data.c;
       const ohlc = data.t.map((t: number, i: number) => ({
         x: new Date(t * 1000),
@@ -2475,18 +2128,25 @@ useEffect(() => {
         l: data.l[i],
         c: data.c[i],
       }));
+      
+        const { macd, signal, histogram } = calculateMACD(closes);
+        const rsi = calculateRSI(closes, 14);
+        const ema200 = closes.length >= 200 ? calculateEMA(closes, 200) : [];
 
-      const result = calculateFinalCTS(
-        ohlc,
-        closes,
-        [],
-        [],
-        closes.map(() => 0),
-        data.v || [],
-        null,
-        [],
-        []
-      );
+        const breakoutResult = detectRectangleBreakout(ohlc, slicedData.v);
+
+        // 2. Calculate CTS
+        const result = calculateFinalCTS(
+          ohlc,
+          closes,
+          macd,
+          rsi,
+          ema200,
+          slicedData.v,
+          breakoutResult,
+          newsData || [],
+          spyData || []
+        );
 
       const ctsScore = typeof result?.finalScore === 'number' ? result.finalScore : 55;
       const breakdown = result?.ctsBreakdown || null;
@@ -2500,7 +2160,13 @@ useEffect(() => {
       const recentClosesStr = closes.slice(-10).map((c: number) => Number(c).toFixed(2)).join(', ');
 
       //console.log(`Real CTS for ${symbol}: ${ctsScore} (${closes.length} bars)`);
-
+      // run backtest 
+        // const backtestResult = runBacktest(ohlc, closes, slicedData.v);
+        // console.log("Return:", backtestResult.totalReturn);
+        // console.log("Win rate:", backtestResult.winRate);
+        // console.log("Max DD:", backtestResult.maxDrawdown);
+        // console.log("Trades:", backtestResult.trades);
+        ///-------------------
       return {
         ctsScore,
         rsi: lastRSI,
@@ -2523,68 +2189,7 @@ useEffect(() => {
       };
     }
   };
-  // migration starts here
-  // Migration function - run once per user
-  // const migrateFromLocalStorage = async () => {
-  //   const supabase = createClient();
-  //   setIsMigrating(true);
-
-  //   try {
-  //     const { data: { user } } = await supabase.auth.getUser();
-  //     if (!user) return;
-
-  //     // 1. Watchlist
-  //     const savedWatchlist = localStorage.getItem('watchlist');
-  //     if (savedWatchlist) {
-  //       const watchlistArray = JSON.parse(savedWatchlist);
-  //       await supabase.from('watchlists').upsert({
-  //         user_id: user.id,
-  //         symbol: watchlistArray,
-  //         created_at: new Date().toISOString()
-  //       });
-  //     }
-
-  //     // 2. Portfolio
-  //     const savedPortfolio = localStorage.getItem('portfolio');
-  //     if (savedPortfolio) {
-  //       const portfolioArray = JSON.parse(savedPortfolio);
-  //       await supabase.from('portfolios').upsert({
-  //         user_id: user.id,
-  //         positions: portfolioArray,
-  //         created_at: new Date().toISOString()
-  //       });
-  //     }
-
-  //     // 3. Auto Trading Stocks
-  //     const savedAutoStocks = localStorage.getItem('autoStocks');
-  //     if (savedAutoStocks) {
-  //       const autoArray = JSON.parse(savedAutoStocks);
-  //       await supabase.from('auto_trades').upsert({
-  //         user_id: user.id,
-  //         symbol: autoArray,
-  //         created_at: new Date().toISOString()
-  //       });
-  //     }
-
-  //     console.log('✅ Migration from localStorage completed');
-
-  //     // Optional: clear localStorage after successful migration
-  //     // localStorage.removeItem('watchlist');
-  //     // localStorage.removeItem('portfolio');
-  //     // localStorage.removeItem('autoStocks');
-
-  //   } catch (err) {
-  //     console.error('Migration failed:', err);
-  //   } finally {
-  //     setIsMigrating(false);
-  //   }
-  // };
-
-  // // Run migration once on mount (after login)
-  // useEffect(() => {
-  //   migrateFromLocalStorage();
-  // }, []);
-
+  
   //Ui start here
   return (
     <ProtectedRoute>
@@ -3390,20 +2995,36 @@ useEffect(() => {
                 {/* Middle Area - Shared Analysis (CTS + AI + News) */}
                 <div className="p-2 lg:p-6 overflow-y-auto flex-1 space-y-5 lg:space-y-6">
 
-                  {/* Timeframe Info Bar */}
-                  {selectedStock && (
-                    <div className="bg-[#1a1f2e] border border-gray-700 rounded-2xl px-5 py-3 flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-4">
-                        <span className="text-gray-400">Chart Data:</span>
-                        <span className="font-medium text-white">{timeRange}</span>
-                        <span className="text-gray-500">•</span>
-                        <span className="font-medium text-white">
-                          {resolution === 'D' ? 'Daily' : resolution + 'min'}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500">Used for CTS calculation</div>
+                    {/* Timeframe & Resolution Controls */}
+                    <div className="bg-[#11151c] border-b border-gray-800 px-2 py-3 flex gap-1 overflow-x-auto shrink-0">
+                      {(['1d', '1w', '1m'] as const).map((range) => (
+                        <button
+                          key={range}
+                          onClick={() => setTimeRange(range)}
+                          className={`px-4 py-1 text-sm rounded-2xl font-medium transition-all whitespace-nowrap ${timeRange === range
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-[#1a1f2e] text-gray-400 hover:bg-[#242a3a]'
+                            }`}
+                        >
+                          {range}
+                        </button>
+                      ))}
+
+                      <div className="w-px bg-gray-700 mx-4 my-2" />
+
+                      {(['1', '5', '15', 'D'] as const).map((res) => (
+                        <button
+                          key={res}
+                          onClick={() => setResolution(res)}
+                          className={`px-3 py-1 text-sm rounded-2xl font-medium transition-all whitespace-nowrap ${resolution === res
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-[#1a1f2e] text-gray-400 hover:bg-[#242a3a]'
+                            }`}
+                        >
+                          {res}
+                        </button>
+                      ))}
                     </div>
-                  )}
 
                   {/* CTS Card - With Stock Symbol */}
                   {selectedStock && finalCtsScore !== null && (
@@ -3467,16 +3088,16 @@ useEffect(() => {
                           Short-term views can be more optimistic. Always check Daily view.
                         </span>
                       </div>
-                      {filtersApplied.ctsBreakdown && (
+                      {ctsBreakdowns[selectedStock] && (
                         <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
-                          <div className="text-gray-400 mb-1">CTS Breakdown</div>
+                          <div className="text-gray-400 mb-1">Luckmi Score Breakdown</div>
                           <div className="grid grid-cols-2 gap-1 text-gray-300">
-                            <div>Trend: {filtersApplied.ctsBreakdown.trend}</div>
-                            <div>EMA: {filtersApplied.ctsBreakdown.ema}</div>
-                            <div>Momentum: {filtersApplied.ctsBreakdown.momentum}</div>
-                            <div>Volume: {filtersApplied.ctsBreakdown.volume}</div>
-                            <div>Rel Strength: {filtersApplied.ctsBreakdown.relative}</div>
-                            <div className="text-red-400">Penalty: {filtersApplied.ctsBreakdown.penalty}</div>
+                            <div className={ctsBreakdowns[selectedStock].trend > 8 ? 'text-emerald-400' : 'text-gray-300'}>Trend: {ctsBreakdowns[selectedStock].trend}</div>
+                            <div className={ctsBreakdowns[selectedStock].ema > 7 ? 'text-emerald-400' : 'text-gray-300'}>EMA: {ctsBreakdowns[selectedStock].ema}</div>
+                            <div className={ctsBreakdowns[selectedStock].momentum > 7 ? 'text-emerald-400' : 'text-gray-300'}>Momentum: {ctsBreakdowns[selectedStock].momentum}</div>
+                            <div className={ctsBreakdowns[selectedStock].volume > 5 ? 'text-emerald-400' : 'text-gray-300'}>Volume: {ctsBreakdowns[selectedStock].volume}</div>
+                            <div className={ctsBreakdowns[selectedStock].relative > 7 ? 'text-emerald-400' : 'text-gray-300'}>Rel Strength: {ctsBreakdowns[selectedStock].relative}</div>
+                            <div className="text-red-400">Penalty: {ctsBreakdowns[selectedStock].penalty}</div>
                           </div>
                         </div>
                       )}
