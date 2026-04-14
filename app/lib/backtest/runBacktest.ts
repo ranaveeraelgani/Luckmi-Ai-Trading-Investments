@@ -1,3 +1,8 @@
+import { calculateMACD } from "../ctsHelpers/calculateMACD";
+import { calculateEMA } from "../ctsHelpers/calculateEMA";
+import { calculateRSI } from "../ctsHelpers/calculateRSI";
+import { detectRectangleBreakout } from "../ctsHelpers/detectRectangleBreakout";
+
 type BacktestTrade = {
   entryPrice: number;
   exitPrice?: number;
@@ -14,13 +19,16 @@ type BacktestResult = {
   totalReturn: number;
   winRate: number;
   maxDrawdown: number;
+  symbol: string;
 };
-import { calculateFinalCTS } from "@/app/lib/indicators/calculateFinalCTS";
-export const runBacktest = (
+import { calculateFinalCTS } from "@/app/lib/calculateScore/calculateFinalCTS";
+import { getNewsSentiment } from "../ctsHelpers/getNewsSentiment";
+export const runBacktest = async (
   ohlc: any[],
   closes: number[],
-  volumes: number[]
-): BacktestResult => {
+  volumes: number[],
+  symbol: string
+): Promise<BacktestResult> => {
 
   let cash = 10000;
   let position: BacktestTrade | null = null;
@@ -28,23 +36,29 @@ export const runBacktest = (
 
   let peakEquity = cash;
   let maxDrawdown = 0;
-
+  var news = await getNewsSentiment(symbol) as any[] || [];
+  //console.log(`Fetched ${news.length} news items for backtest of ${symbol}`, news);
   for (let i = 50; i < closes.length; i++) {
     // Slice historical data up to this candle
     const sliceCloses = closes.slice(0, i + 1);
     const sliceOhlc = ohlc.slice(0, i + 1);
     const sliceVolumes = volumes.slice(0, i + 1);
+    const { macd, signal, histogram } = calculateMACD(closes);
+    const rsi = calculateRSI(closes, 14);
+    const ema200 = closes.length >= 200 ? calculateEMA(closes, 200) : [];
 
-    const result = calculateFinalCTS(
+    const breakoutResult = detectRectangleBreakout(ohlc, volumes);
+    const result =  await calculateFinalCTS(
       sliceOhlc,
       sliceCloses,
-      [],
-      [],
-      sliceCloses.map(() => 0),
+      macd,
+      rsi,
+      ema200,
       sliceVolumes,
       null,
+      news || [],
       [],
-      []
+      symbol
     );
 
     const ctsScore = result.finalScore;
@@ -121,11 +135,13 @@ export const runBacktest = (
 
   const wins = trades.filter(t => (t.pnl || 0) > 0).length;
   const winRate = trades.length ? (wins / trades.length) * 100 : 0;
-
+  console.log(`Backtest completed for ${symbol} - Total Return: ${totalReturn.toFixed(2)}%, Win Rate: ${winRate.toFixed(1)}%, Max Drawdown: ${(maxDrawdown * 100).toFixed(1)}%`);
+  console.log(`Trades:`, trades);
   return {
     trades,
     totalReturn,
     winRate,
-    maxDrawdown
+    maxDrawdown,
+    symbol
   };
 };

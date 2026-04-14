@@ -1,4 +1,5 @@
-
+import { calculateMACD } from "../ctsHelpers/calculateMACD";
+import { calculateNewsSentiment } from "../ctsHelpers/calculateNewsSentiment";
 // =========================
 // helper
 // =========================
@@ -8,70 +9,9 @@ const toNumber = (value: string | number | undefined): number => {
     const num = typeof value === 'string' ? parseFloat(value) : value;
     return isNaN(num) ? 0 : num;
 };
-// MACD (12, 26, 9)
-const calculateMACD = (closes: number[]) => {
-    if (closes.length < 26) return { macd: [], signal: [], histogram: [] };
 
-    const ema12 = calculateEMA(closes, 12);
-    const ema26 = calculateEMA(closes, 26);
-
-    const macd: number[] = [];
-    for (let i = 0; i < ema12.length; i++) {
-        macd.push(ema12[i] - ema26[i + (ema26.length - ema12.length)]);
-    }
-
-    const signal = calculateEMA(macd, 9);
-    const histogram = macd.slice(-signal.length).map((m, i) => m - signal[i]);
-
-    return { macd: macd.slice(-signal.length), signal, histogram };
-};
-// Simple EMA calculation
-const calculateEMA = (data: number[], period: number): number[] => {
-    const k = 2 / (period + 1);
-    const ema: number[] = [];
-    let sma = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
-
-    ema.push(sma);
-    for (let i = period; i < data.length; i++) {
-        sma = data[i] * k + sma * (1 - k);
-        ema.push(sma);
-    }
-    return ema;
-};
-const calculateNewsSentiment = (news: any[]) => {
-    if (!news || news.length === 0) return 8; // neutral base
-
-    let score = 8; // start with neutral base
-
-    const positiveKeywords = [
-        'beat', 'raise', 'upgrade', 'strong', 'buy', 'bullish',
-        'record', 'growth', 'outperform', 'surge', 'rally', 'positive'
-    ];
-
-    const negativeKeywords = [
-        'miss', 'cut', 'downgrade', 'weak', 'sell', 'bearish',
-        'decline', 'drop', 'loss', 'disappoint', 'negative', 'warn'
-    ];
-
-    news.forEach(n => {
-        const text = (n.headline + ' ' + (n.summary || '')).toLowerCase();
-
-        // Count positive matches
-        const posMatches = positiveKeywords.filter(w => text.includes(w)).length;
-        score += posMatches * 4;   // +4 per strong positive keyword
-
-        // Count negative matches
-        const negMatches = negativeKeywords.filter(w => text.includes(w)).length;
-        score -= negMatches * 5;   // -5 per negative keyword (stronger penalty)
-    });
-
-    // Cap the sentiment contribution
-    score = Math.max(-10, Math.min(20, score));
-
-    return score;
-};
 // MAIN SCORER – exact to your 15-factor model
-export const calculateFinalCTS = (
+export const calculateFinalCTS = (  
     ohlc: any[],
     closes: number[],
     macdData: any[] = [],
@@ -80,7 +20,8 @@ export const calculateFinalCTS = (
     volumes: number[] = [],
     breakout: any = null,
     news: any[] = [],
-    spyCloses: number[] = []
+    spyCloses: number[] = [],
+    symbol: string 
 ) => {
 
     if (closes.length < 30) {
@@ -106,6 +47,7 @@ export const calculateFinalCTS = (
     let penaltyScore = 0;
     const lastClose = toNumber(closes.at(-1));
     const ema200Last = toNumber(ema200Data.length > 0 ? ema200Data.at(-1) : lastClose);
+    //console.log(`Calculating CTS for ${symbol} - Last Close: ${lastClose}, EMA200: ${ema200Last}`, ema200Data.at(-10), ema200Data.at(-1));
     const lastRSI = toNumber(rsiData.length > 0 ? rsiData.at(-1) : 50);
 
     // -------------------
@@ -229,7 +171,7 @@ export const calculateFinalCTS = (
     // -------------------
     // 5. NEWS (capped)
     // -------------------
-    const newsScore = Math.max(-5, Math.min(5, calculateNewsSentiment(news)));
+    const newsScore = Math.max(-5, Math.min(5,  calculateNewsSentiment(news)));
     rawBaseScore += newsScore;
 
     // -------------------
