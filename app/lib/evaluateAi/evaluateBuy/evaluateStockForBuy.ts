@@ -34,7 +34,7 @@ export const evaluateStockForBuy = async (symbol: string, autoStocks: any[], cur
         const customGuidance = autoStock.customGuidance || "No special instruction.";
         const momentumState = getMomentumState(indicatorData.macdArr ?? [], indicatorData.signalArr ?? []);
         const trendStage = getTrendStage(indicatorData.closes, Number(indicatorData.ema200));
-        console.log('trendStage', trendStage, indicatorData.closes.slice(-10), indicatorData.ema200);
+        //console.log('trendStage', trendStage, indicatorData.closes.slice(-10), indicatorData.ema200);
         const fakeBreakout = isFakeBreakout(indicatorData.closes, indicatorData.volumes);
         // log all indicators for debugging
         //console.log(`Indicators for ${symbol} - CTS: ${ctsScore}, RSI: ${lastRSI}, MACD: ${lastMACD}, Signal: ${lastSignal}, EMA200: ${ema200}, Momentum: ${momentumState}, Trend: ${trendStage}, Fake Breakout: ${fakeBreakout}`);
