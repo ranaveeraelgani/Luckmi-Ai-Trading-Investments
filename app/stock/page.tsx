@@ -158,6 +158,15 @@ export default function ChatPage() {
   const quotesRef = useRef(quotes);
   const [backtestResult, setBacktestResult] = useState<any>(null);
   const [showBacktestModal, setShowBacktestModal] = useState(false);
+  const [openStocks, setOpenStocks] = useState<Record<string, boolean>>({});
+
+  // toggle for trade history details in auto tab
+  const toggleStock = (symbol: string) => {
+    setOpenStocks(prev => ({
+      ...prev,
+      [symbol]: !prev[symbol]
+    }));
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !zoomLoaded) {
@@ -1456,7 +1465,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
 //     }
 //   };
 
-  // Final Stable Auto Trading Monitoring Loop
+
   // Final Auto Trading Monitoring Loop with Compounding
   useEffect(() => {
     if (!isAutoMonitoring || autoStocks.length === 0) {
@@ -1803,7 +1812,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         console.log('💾 Updating autoStocks after trade(s)');
       }
       setAutoStocks(currentStocks);
-    }, 600000); // 10 mins for testing
+    }, 10000); // 10 mins for testing
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
@@ -2020,6 +2029,44 @@ useEffect(() => {
     toast.error(`Backtest failed for ${symbol}`);  
     }
 };
+// 🔥 Total Allocation & PnL Calc
+  const totalAllocation = autoStocks.reduce(
+    (sum, s) => sum + Number(s.allocation || 0),
+    0
+  );
+
+  // 🔥 Total PnL
+  let totalPnL = 0;
+
+  autoStocks.forEach(stock => {
+    if (stock.currentPosition) {
+      const currentPrice = Number(quotes[stock.symbol]?.price || 0);
+
+      if (!currentPrice) return;
+
+      const invested =
+        (stock.currentPosition.shares || 0) *
+        (stock.currentPosition.entryPrice || 0);
+
+      const currentValue =
+        (stock.currentPosition.shares || 0) * currentPrice;
+
+      totalPnL += currentValue - invested;
+    }
+  });
+
+  const totalInvested = autoStocks.reduce((sum, stock) => {
+    if (!stock.currentPosition) return sum;
+
+    return (
+      sum +
+      (stock.currentPosition.shares || 0) *
+      (stock.currentPosition.entryPrice || 0)
+    );
+  }, 0);
+
+  const totalPnLPercent =
+    totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0;
   //Ui start here
   return (
     <ProtectedRoute>
@@ -2433,10 +2480,9 @@ useEffect(() => {
                 <div className="max-w-5xl mx-auto">
                   <div className="space-y-6">
                     {/* Header */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <h2 className="text-2xl font-semibold text-white">Auto Paper Trading</h2>
-                        <p className="text-gray-400 text-sm mt-1">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>                       
+                        <p className="text-gray-400 text-xs">
                           AI-powered simulated trading • Max 3 stocks • AI has final veto
                         </p>
                       </div>
@@ -2456,44 +2502,42 @@ useEffect(() => {
                         <div className="flex justify-between items-center mb-6">
                           <div>
                             <div className="text-lg font-semibold">Auto Trading Portfolio</div>
-                            <div className="text-xs text-gray-400">Live Paper Trading Performance</div>
+                            <div className="text-xs text-gray-400">
+                              Live Paper Trading Performance
+                            </div>
                           </div>
+
                           <div className="text-right">
                             <div className="text-sm text-gray-400">Total Allocation</div>
                             <div className="text-2xl font-mono font-semibold">
-                              ${autoStocks.reduce((sum, s) => sum + (s.allocation || 0), 0).toLocaleString()}
+                              ${totalAllocation.toFixed(2)}
                             </div>
                           </div>
                         </div>
 
-                        {/* Overall P&L */}
-                        {(() => {
-                          let totalInvested = 0;
-                          let totalCurrentValue = 0;
-
-                          autoStocks.forEach(stock => {
-                            if (stock.currentPosition) {
-                              const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
-                              totalInvested += stock.currentPosition.shares * stock.currentPosition.entryPrice;
-                              totalCurrentValue += stock.currentPosition.shares * currentPrice;
-                            }
-                          });
-
-                          const totalPnL = totalCurrentValue - totalInvested;
-                          const totalPnLPercent = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0;
-
-                          return (
-                            <div className={`p-5 rounded-2xl ${totalPnL >= 0 ? 'bg-emerald-900/30 border border-emerald-500/50' : 'bg-red-900/30 border border-red-500/50'}`}>
-                              <div className="flex justify-between items-center">
-                                <div className="text-sm text-gray-400">Overall Unrealized P&L</div>
-                                <div className={`text-2xl font-mono font-semibold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                  {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(0)}
-                                  <span className="text-sm">({totalPnLPercent.toFixed(1)}%)</span>
-                                </div>
-                              </div>
+                        {/* 🔥 Clean PnL */}
+                        <div
+                          className={`p-5 rounded-2xl ${totalPnL >= 0
+                              ? 'bg-emerald-900/30 border border-emerald-500/50'
+                              : 'bg-red-900/30 border border-red-500/50'
+                            }`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="text-sm text-gray-400">
+                              Overall Unrealized P&L
                             </div>
-                          );
-                        })()}
+
+                            <div
+                              className={`text-2xl font-mono font-semibold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'
+                                }`}
+                            >
+                              {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+                              <span className="text-sm ml-1">
+                                ({totalPnLPercent.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-3">
@@ -2533,29 +2577,51 @@ useEffect(() => {
                     </div>
 
                     {/* Summary Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+
                       <div className="bg-[#1a1f2e] rounded-3xl p-6">
                         <p className="text-gray-400 text-sm">Stocks in Auto</p>
                         <p className="text-4xl font-bold mt-2">{autoStocks.length}/3</p>
                       </div>
+
                       <div className="bg-[#1a1f2e] rounded-3xl p-6">
                         <p className="text-gray-400 text-sm">Active Positions</p>
                         <p className="text-4xl font-bold mt-2 text-emerald-400">
                           {autoStocks.filter(s => s.status === 'in-position').length}
                         </p>
                       </div>
-                      <div className="bg-[#1a1f2e] rounded-4xl p-6">
+
+                      <div className="bg-[#1a1f2e] rounded-3xl p-6">
                         <p className="text-gray-400 text-sm">Total Allocated</p>
                         <p className="text-3xl font-bold mt-2">
-                          ${autoStocks.reduce((sum, s) => sum + (s.allocation || 0), 0).toLocaleString()}
+                          ${totalAllocation.toFixed(2)}
                         </p>
                       </div>
+
+                      {/* 🔥 NEW: Total PnL */}
+                      <div className="bg-[#1a1f2e] rounded-3xl p-6">
+                        <p className="text-gray-400 text-sm">Total P&L</p>
+                        <p
+                          className={`text-2xl font-bold mt-2 ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'
+                            }`}
+                        >
+                          {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+                          <span className="text-xs ml-1">
+                            ({totalPnLPercent.toFixed(1)}%)
+                          </span>
+                        </p>
+                      </div>
+
                       <div className="bg-[#1a1f2e] rounded-3xl p-6">
                         <p className="text-gray-400 text-sm">Monitoring</p>
-                        <p className={`text-4xl font-bold mt-2 ${isAutoMonitoring ? 'text-emerald-400' : 'text-gray-500'}`}>
+                        <p
+                          className={`text-4xl font-bold mt-2 ${isAutoMonitoring ? 'text-emerald-400' : 'text-gray-500'
+                            }`}
+                        >
                           {isAutoMonitoring ? 'ON' : 'OFF'}
                         </p>
                       </div>
+
                     </div>
 
                     {/* Auto Stocks List */}
@@ -2584,38 +2650,90 @@ useEffect(() => {
                             const priceChange = toNumber(quotes[stock.symbol]?.change || 0);
                             const isUp = priceChange >= 0;
                             const percentChange = parseFloat(quotes[stock.symbol]?.percentChange);
-                            const totalNumberOfStocks = autoStocks.length;
-                            return (
-                              <div key={stock.id} className="bg-[#11151c] border border-gray-700 rounded-3xl p-6">
-                                <div className="flex justify-between items-start">
-                                  <div>
-                                    <div className="font-semibold text-xl">{stock.symbol}</div>
-                                    <div className="text-xs text-gray-400">Auto Trading</div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className={`text-2xl font-mono font-semibold flex items-center gap-1 justify-end ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      ${currentPrice.toFixed(2)}
-                                      <span className="text-lg">{isUp ? '↑' : '↓'}</span>
-                                    </div>
-                                    <div className={`text-xs ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {isUp ? '+' : ''}{priceChange.toFixed(2)} ({percentChange.toFixed(1)}%)
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-col items-end gap-1">
-                                    <div className={`px-3 py-0.5 text-xs rounded-full ${stock.status === 'in-position'
-                                      ? 'bg-emerald-500/20 text-emerald-400'
-                                      : 'bg-gray-700 text-gray-400'
-                                      }`}>
-                                      {stock.status === 'in-position' ? 'In Position' : 'Monitoring'}
-                                    </div>
+                            const totalShares = stock.currentPosition?.shares || 0;
 
-                                    {/* Subtle indicators */}
-                                    <div className="flex gap-2 text-[10px] text-gray-500">
-                                      {stock.compoundProfits && <span className="bg-emerald-900/50 px-2 py-0.3 rounded-2xl">♻️ On</span>}
-                                      {stock.rinseRepeat && <span className="bg-blue-900/50 px-2 py-0.5 rounded-2xl">🔄 On ×{stock.maxRepeats}</span>}
+                            const pnlPercent = invested > 0
+                              ? (unrealizedPnL / invested) * 100
+                              : 0;
+                            return (
+                              <div key={stock.id} className={`bg-[#11151c] border ${unrealizedPnL > 0 ? 'border-emerald-500/30' : 'border-gray-700'} rounded-3xl p-6`}>
+                                <div
+                                  onClick={() => toggleStock(stock.id)}
+                                  className="flex justify-between items-start cursor-pointer hover:bg-[#1a1f2e] p-3 -m-3 rounded-xl transition"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-xs text-gray-500">
+                                      {openStocks[stock.id] ? '▲' : '▼'}
                                     </div>
                                   </div>
+                                  {/* 🔥 COLLAPSED SUMMARY */}
+                                  {!openStocks[stock.id] && (
+                                    <div className="mt-4 grid grid-cols-4 gap-3 text-xs text-gray-300">
+                                      {/* add stock symbol */}
+                                      <div>
+                                        <div className="text-gray-500">Symbol</div>
+                                        <div className="font-mono">{stock.symbol}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-gray-500">Shares</div>
+                                        <div className="font-mono">{totalShares}</div>
+                                      </div>
+
+                                      <div>
+                                        <div className="text-gray-500">Allocated</div>
+                                        <div className="font-mono">
+                                          ${(stock.allocation || 0).toFixed(2)}
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <div className="text-gray-500">P&L</div>
+                                        <div className={`font-mono ${unrealizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                          {unrealizedPnL >= 0 ? '+' : ''}${unrealizedPnL.toFixed(0)}
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <div className="text-gray-500">$Available</div>
+                                        <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                          ${Available$.toFixed(0)}
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-row items-end gap-1">
+                                        <div className={`px-2 py-0.5 text-xs rounded-full ${stock.status === 'in-position'
+                                          ? 'bg-emerald-500/20 text-emerald-400'
+                                          : 'bg-gray-700 text-gray-400'
+                                          }`}>
+                                          {stock.status === 'in-position' ? 'InPosition' : 'Monitoring'}
+                                        </div>
+
+                                        {/* Subtle indicators */}
+                                        <div className="flex gap-1 text-[10px] text-gray-500">
+                                          {stock.compoundProfits && <span className="bg-emerald-900/50 px-2 py-0.3 rounded-2xl">♻️</span>}
+                                          {stock.rinseRepeat && <span className="bg-blue-900/50 px-2 py-0.5 rounded-2xl">🔄×{stock.maxRepeats}</span>}
+                                          </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  
                                 </div>
+                                {openStocks[stock.id] && (
+                                  <> 
+                                    {/* Stock Details */}
+                                    <div className="mt-4 p-4 bg-[#1a1f2e] rounded-xl">
+                                      <div className="flex justify-between items-center">
+                                        <div>
+                                          <div className="text-xs text-gray-400">Symbol</div>
+                                          <div className="font-mono font-medium">{stock.symbol}</div>
+                                        </div>
+                                        <div className={`px-3 py-0.5 text-xs rounded-full ${stock.status === 'in-position'
+                                          ? 'bg-emerald-500/20 text-emerald-400'
+                                          : 'bg-gray-700 text-gray-400'
+                                          }`}>
+                                          {stock.status === 'in-position' ? 'In Position' : 'Monitoring'}
+                                        </div>
+                                      </div>
+                                    </div>
 
                                 {/* Allocation Summary */}
                                 <div className="mt-6 grid grid-cols-3 gap-4 text-sm">
@@ -2652,91 +2770,93 @@ useEffect(() => {
                                       <div className="font-mono">${(stock.currentPosition ? stock.currentPosition.shares * currentPrice : 0).toFixed(0)}</div>
                                     </div> */}
                                 </div>
-                          
-                                {/* AI Decision */}
-                                {stock.lastAiDecision && (
-                                  <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
-                                    <div className="flex justify-between items-center">
-                                      <span className="text-gray-400">AI Decision</span>
-                                      <span className={`font-medium ${stock.lastAiDecision.action === 'Buy'
-                                          ? 'text-emerald-400'
-                                          : 'text-amber-400'
-                                        }`}>
-                                        (Luckmi score: {stock.lastAiDecision.ctsScore}) {stock.lastAiDecision.action} ({stock.lastAiDecision.confidence}%)
-                                      </span>
-                                    </div>
-                                    <div className="text-gray-300 mt-1 line-clamp-2">
-                                      {stock.lastAiDecision.reason}
-                                    </div>
-                                    <div className="text-[10px] text-gray-500 mt-1">
-                                      {new Date(stock.lastAiDecision.timestamp).toLocaleTimeString()}
-                                    </div>
-                                  </div>
-                                )}
-      
-                                {/* Luckmi Breakdown */}
-                                {stock.ctsBreakdown && (
-                                  <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
-                                    <div className="text-gray-400 mb-1">Luckmi Breakdown</div>
-                                    <div className="grid grid-cols-2 gap-1 text-gray-300">
-                                      <div>Trend: {stock.ctsBreakdown.trend}</div>
-                                      <div>EMA: {stock.ctsBreakdown.ema}</div>
-                                      <div>Momentum: {stock.ctsBreakdown.momentum}</div>
-                                      <div>Volume: {stock.ctsBreakdown.volume}</div>
-                                      <div>Rel Strength: {stock.ctsBreakdown.relative}</div>
-                                      <div className="text-red-400">Penalty: {stock.ctsBreakdown.penalty}</div>
-                                    </div>
-                                  </div>
-                                )}
 
-                                {/* No Trade Reasons */}
-                                {stock.lastAiDecision?.action === 'Hold' && stock.noTradeReasons?.length > 0 && (
-                                  <div className="mt-2 text-xs text-amber-400">
-                                    No Trade Reason:
-                                    <ul className="list-disc ml-4 mt-1 text-gray-300">
-                                      {stock.noTradeReasons.map((r: string, i: number) => (
-                                        <li key={i}>{r}</li>
-                                      ))}
-                                    </ul>
-                                  </div>
+                                    {/* AI Decision */}
+                                    {stock.lastAiDecision && (
+                                      <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
+                                        <div className="flex justify-between items-center">
+                                          <span className="text-gray-400">AI Decision</span>
+                                          <span className={`font-medium ${stock.lastAiDecision.action === 'Buy'
+                                            ? 'text-emerald-400'
+                                            : 'text-amber-400'
+                                            }`}>
+                                            (Luckmi score: {stock.lastAiDecision.ctsScore}) {stock.lastAiDecision.action} ({stock.lastAiDecision.confidence}%)
+                                          </span>
+                                        </div>
+                                        <div className="text-gray-300 mt-1 line-clamp-2">
+                                          {stock.lastAiDecision.reason}
+                                        </div>
+                                        <div className="text-[10px] text-gray-500 mt-1">
+                                          {new Date(stock.lastAiDecision.timestamp).toLocaleTimeString()}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Luckmi Breakdown */}
+                                    {stock.ctsBreakdown && (
+                                      <div className="mt-4 p-3 bg-[#1a1f2e] rounded-xl text-xs">
+                                        <div className="text-gray-400 mb-1">Luckmi Breakdown</div>
+                                        <div className="grid grid-cols-2 gap-1 text-gray-300">
+                                          <div>Trend: {stock.ctsBreakdown.trend}</div>
+                                          <div>EMA: {stock.ctsBreakdown.ema}</div>
+                                          <div>Momentum: {stock.ctsBreakdown.momentum}</div>
+                                          <div>Volume: {stock.ctsBreakdown.volume}</div>
+                                          <div>Rel Strength: {stock.ctsBreakdown.relative}</div>
+                                          <div className="text-red-400">Penalty: {stock.ctsBreakdown.penalty}</div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* No Trade Reasons */}
+                                    {stock.lastAiDecision?.action === 'Hold' && stock.noTradeReasons?.length > 0 && (
+                                      <div className="mt-2 text-xs text-amber-400">
+                                        No Trade Reason:
+                                        <ul className="list-disc ml-4 mt-1 text-gray-300">
+                                          {stock.noTradeReasons.map((r: string, i: number) => (
+                                            <li key={i}>{r}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                    {/* Action Buttons */}
+                                    <div className="mt-6 flex gap-3">
+                                      <button
+                                        onClick={() => {
+                                          if (!stock) {
+                                            alert("Stock data is missing");
+                                            return;
+                                          }
+                                          setSelectedAutoStock(stock);        // ← Force set it here
+                                          setBuyMoreAmount(0);
+                                          setShowBuyMoreModal(true);
+                                        }}
+                                        className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-2xl text-sm font-medium transition-colors"
+                                      >
+                                        Add Capital
+                                      </button>
+
+                                      {stock.status === 'in-position' && (
+                                        <button
+                                          onClick={() => manualSell(stock.symbol)}
+                                          className="flex-1 py-3 bg-red-600 hover:bg-red-700 rounded-2xl text-sm font-medium transition-colors"
+                                        >
+                                          Sell Now
+                                        </button>
+                                      )}
+
+                                      <button
+                                        onClick={() => {
+                                          if (confirm(`Remove ${stock.symbol} from Auto Trading?`)) {
+                                            setAutoStocks(prev => prev.filter((_, i) => i !== index));
+                                          }
+                                        }}
+                                        className="px-5 py-3 bg-gray-800 hover:bg-red-900/50 text-red-400 rounded-2xl text-sm font-medium transition-colors"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </>
                                 )}
-                                {/* Action Buttons */}
-                                <div className="mt-6 flex gap-3">
-                                  <button
-                                    onClick={() => {
-                                      if (!stock) {
-                                        alert("Stock data is missing");
-                                        return;
-                                      }
-                                      setSelectedAutoStock(stock);        // ← Force set it here
-                                      setBuyMoreAmount(0);
-                                      setShowBuyMoreModal(true);
-                                    }}
-                                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-2xl text-sm font-medium transition-colors"
-                                  >
-                                    Add Capital
-                                  </button>
-
-                                  {stock.status === 'in-position' && (
-                                    <button
-                                      onClick={() => manualSell(stock.symbol)}
-                                      className="flex-1 py-3 bg-red-600 hover:bg-red-700 rounded-2xl text-sm font-medium transition-colors"
-                                    >
-                                      Sell Now
-                                    </button>
-                                  )}
-
-                                  <button
-                                    onClick={() => {
-                                      if (confirm(`Remove ${stock.symbol} from Auto Trading?`)) {
-                                        setAutoStocks(prev => prev.filter((_, i) => i !== index));
-                                      }
-                                    }}
-                                    className="px-5 py-3 bg-gray-800 hover:bg-red-900/50 text-red-400 rounded-2xl text-sm font-medium transition-colors"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
                               </div>
                             );
                           })}
@@ -2782,42 +2902,116 @@ useEffect(() => {
                       {autoStocks.every(s => !s.tradeHistory || s.tradeHistory.length === 0) ? (
                         <div className="bg-[#11151c] border border-dashed border-gray-700 rounded-3xl p-16 text-center">
                           <p className="text-gray-400">No trades yet</p>
-                          <p className="text-xs text-gray-500 mt-2">Auto trading activity will appear here when buys or sells happen</p>
+                          <p className="text-xs text-gray-500 mt-2">
+                            Auto trading activity will appear here when buys or sells happen
+                          </p>
                         </div>
                       ) : (
-                        <div className="bg-[#11151c] border border-gray-700 rounded-3xl divide-y divide-gray-800 overflow-hidden">
-                          {autoStocks.flatMap(stock =>
-                            (stock.tradeHistory.sort((a: any, b: any) => b.time - a.time) || []).map((trade: any, idx: number) => (
-                              <div key={`${stock.symbol}-${idx}`} className="p-5 hover:bg-[#1a1f2e] transition-colors">
-                                <div className="flex justify-between">
-                                  <div>
-                                    <div className="font-medium flex items-center gap-2">
-                                      {trade.type === 'buy' || trade.type === 'buy_more' ? (
-                                        <span className="text-emerald-400">🟢 BUY</span>
-                                      ) : (
-                                        <span className="text-red-400">🔴 SELL</span>
-                                      )}
-                                      {trade.shares} shares of {stock.symbol}
+                        <div className="space-y-6">
+                          {autoStocks.map((stock) => {
+                            const trades = (stock.tradeHistory || [])
+                              .slice()
+                              .sort((a: any, b: any) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+                            if (trades.length === 0) return null;
+
+                            // 🔥 Calculate realized PnL
+                            const realizedPnL = trades
+                              .filter((t: any) => t.type === 'sell' || t.type === 'partial_sell')
+                              .reduce((sum: number, t: any) => sum + (t.pnl || 0), 0);
+
+                            return (
+                              <div key={stock.symbol} className="bg-[#11151c] border border-gray-700 rounded-3xl overflow-hidden">
+
+                                {/* 🔥 STOCK HEADER */}
+                                <div
+                                  onClick={() => toggleStock(stock.symbol)}
+                                  className="p-5 border-b border-gray-800 flex justify-between items-center cursor-pointer hover:bg-[#1a1f2e] transition-colors"
+                                >
+                                  <div className="py-2 text-xs text-gray-400 flex justify-between">
+                                    <span className='mr-1'>
+                                      Buys: {trades.filter((t: any) => t.type.includes('buy')).length}
+                                    </span>
+                                    <span>
+                                      Sells: {trades.filter((t: any) => t.type.includes('sell')).length}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <div className={`text-sm font-mono font-medium ${realizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {realizedPnL >= 0 ? '+' : ''}${realizedPnL.toFixed(2)}
                                     </div>
-                                    <div className="text-xs text-gray-400 mt-1">
-                                      {trade.time.toLocaleString()} • {trade.reason}
+
+                                    <div className="text-gray-400 text-xs">
+                                      {openStocks[stock.symbol] ? '▲' : '▼'}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-lg font-semibold">{stock.symbol}</div>
+                                    <div className="text-xs text-gray-400">
+                                      {trades.length} trades
                                     </div>
                                   </div>
 
-                                  <div className="text-right">
-                                    <div className="font-mono text-sm">
-                                      @ ${Number(trade.price).toFixed(2)}
-                                    </div>
-                                    {trade.pnl !== undefined && (
-                                      <div className={`text-sm font-medium ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                        {trade.pnl >= 0 ? '+' : ''}${Number(trade.pnl).toFixed(2)}
-                                      </div>
-                                    )}
+                                  <div className={`text-sm font-mono font-medium ${realizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {realizedPnL >= 0 ? '+' : ''}${realizedPnL.toFixed(2)}
                                   </div>
                                 </div>
+
+                                {/* 🔥 TRADE LIST */}
+                                {openStocks[stock.symbol] && (
+                                  <div className="divide-y divide-gray-800">
+                                  {trades.map((trade: any, idx: number) => (
+                                    <div key={idx} className="p-4 hover:bg-[#1a1f2e] transition-colors">
+                                      <div className="flex justify-between items-start">
+
+                                        <div>
+                                          <div className="flex items-center gap-2 text-sm font-medium">
+                                            {(trade.type === 'buy' || trade.type === 'buy_more') && (
+                                              <span className="text-emerald-400">🟢 BUY</span>
+                                            )}
+                                            {(trade.type === 'sell' || trade.type === 'partial_sell') && (
+                                              <span className="text-red-400">🔴 SELL</span>
+                                            )}
+                                            {trade.shares} shares
+                                          </div>
+
+                                          <div className="text-xs text-gray-400 mt-1">
+                                            {new Date(trade.time).toLocaleString()}
+                                          </div>
+
+                                          <div className="text-xs text-gray-500 mt-1">
+                                            {trade.reason}
+                                          </div>
+
+                                          {/* 🔥 AI INTELLIGENCE DISPLAY */}
+                                          {trade.ctsScore && (
+                                            <div className="text-[10px] mt-1 text-gray-500">
+                                              CTS: {trade.ctsScore} • Confidence: {trade.confidence || '-'}%
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        <div className="text-right">
+                                          <div className="font-mono text-sm">
+                                            @ ${Number(trade.price).toFixed(2)}
+                                          </div>
+
+                                          {trade.pnl !== undefined && (
+                                            <div className={`text-sm font-medium ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                              {trade.pnl >= 0 ? '+' : ''}${Number(trade.pnl).toFixed(2)}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                      </div>
+                                    </div>
+                                  ))}
+                                  </div>
+                                )}
+
                               </div>
-                            ))
-                          )}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
