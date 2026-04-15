@@ -158,44 +158,6 @@ export default function ChatPage() {
   const quotesRef = useRef(quotes);
   const [backtestResult, setBacktestResult] = useState<any>(null);
   const [showBacktestModal, setShowBacktestModal] = useState(false);
-  // Auto Trading Monitoring Engine
-  useEffect(() => {
-    if (!isAutoMonitoring || autoStocks.length === 0) return;
-
-    const interval = setInterval(async () => {
-      const updatedStocks = [...autoStocks];
-
-      for (let i = 0; i < updatedStocks.length; i++) {
-        const stock = updatedStocks[i];
-
-        // Skip if max repeats reached
-        if (stock.tradeHistory && stock.tradeHistory.length >= stock.maxRepeats && stock.maxRepeats !== 999) {
-          continue;
-        }
-
-        try {
-          // Get latest CTS and AI for this stock
-          // (We'll reuse your existing fetchCandles + CTS + AI logic here)
-          // For now, we'll simulate with current selectedStock logic. We'll refine this.
-
-          if (stock.status === 'idle' || stock.status === 'monitoring') {
-            // Trigger CTS + AI evaluation for this stock
-            // You can call a function like evaluateStockForAuto(stock.symbol)
-          }
-          else if (stock.status === 'in-position' && stock.currentPosition) {
-            // Ask AI for sell decision
-            // We'll create a dedicated sell evaluation function
-          }
-        } catch (err) {
-          console.error(`Auto error for ${stock.symbol}:`, err);
-        }
-      }
-
-      setAutoStocks(updatedStocks);
-    }, 60000); // Check every 60 seconds
-
-    return () => clearInterval(interval);
-  }, [isAutoMonitoring, autoStocks]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !zoomLoaded) {
@@ -223,7 +185,7 @@ export default function ChatPage() {
     const interval = setInterval(fetchQuotes, 30000); // refresh every 30 seconds
 
     return () => clearInterval(interval);
-  }, [watchlist, portfolio]);   // ← Must include 'portfolio'
+  }, [watchlist, portfolio, autoStocks]);   // ← Must include 'portfolio'
 
   // Load watchlist from Supabase - Clean & Safe
   useEffect(() => {
@@ -539,54 +501,7 @@ export default function ChatPage() {
       setSelectedStock(null);
       setChartData(null);
     }
-  };
-
-  // Final robust AI trigger
-  // Nuclear version - single pending flag + immediate cancellation
-  //   const isAiProcessing = useRef(false);
-
-  // // Simplified but strict AI trigger
-  // useEffect(() => {
-  //   // Reset immediately when anything changes
-  //   isAiProcessing.current = false;
-
-  //   if (!selectedStock || finalCtsScore === null) {
-  //     setAiRecommendation(null);
-  //     return;
-  //   }
-
-  //   const currentStock = selectedStock;
-  //   const currentCts = finalCtsScore;
-
-  //   console.log(`CTS ready (${currentCts}) → starting AI for ${currentStock}`);
-
-  //   isAiProcessing.current = true;
-
-  //   const timer = setTimeout(() => {
-  //     // Strict check: only execute if still processing and values match
-  //     if (!isAiProcessing.current || selectedStock !== currentStock || finalCtsScore !== currentCts) {
-  //       console.log(`Ignoring stale AI for ${currentStock}`);
-  //       return;
-  //     }
-
-  //     console.log(`Executing AI for ${currentStock} with CTS: ${currentCts}`);
-  //     getAiRecommendation(currentStock, currentCts);
-  //     fetchNews(currentStock);
-
-  //     isAiProcessing.current = false;
-  //   }, 650); // Slightly longer delay
-
-  //   return () => {
-  //     clearTimeout(timer);
-  //     isAiProcessing.current = false;
-  //   };
-  // }, [selectedStock, finalCtsScore]);
-
-  // Reset AI flag when stock or timeframe changes
-  // useEffect(() => {
-  //   aiHasRunRef.current = false;
-  // }, [selectedStock, timeRange, resolution]);
-
+  };  
 
   // Single stable effect for fetch + CTS + AI
   const processingRef = useRef(false);
@@ -1050,7 +965,6 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
   const fetchQuotes = async () => {
     // Collect all unique symbols from watchlist, autoStocks, and portfolio
     const portfolioSymbols = portfolio.map((pos: any) => pos.symbol);
-
     const allSymbolsSet = new Set([
       ...watchlist,
       ...autoStocks.map((s: any) => s.symbol),
@@ -1086,7 +1000,10 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         }
       });
 
-      setQuotes(quoteMap);
+      setQuotes(prev => ({
+        ...prev,
+        ...quoteMap
+      }));
       setLastUpdated(new Date());
       //console.log('Quotes updated successfully');
     } catch (err) {
@@ -1095,7 +1012,6 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
       setQuotesLoading(false);
     }
   };
-
 
   // Fetch News
   const fetchNews = useCallback(async (symbol: string) => {
@@ -1334,7 +1250,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     addToAutoLog(`💰 BUY MORE ${symbol} — +$${additionalAmount}`);
   };
 
-//   // Final evaluateStockForBuy - Rich Prompt + Early Cash Check
+  // Main Final evaluateStockForBuy/Sell - Rich Prompt + Early Cash Check
 //   const evaluateStockForBuy = async (symbol: string) => {
 //     //console.log(`🔍 Evaluating BUY for ${symbol}`);
 
@@ -1549,7 +1465,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     }
 
     console.log(`🚀 Auto monitoring started for ${autoStocks.length} stocks`);
-
+    // autoStocks time interval - every 10 minutes
     const interval = setInterval(async () => {
       console.log('🔄 Auto trade check running...');
 
@@ -1558,7 +1474,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
 
       for (let i = 0; i < currentStocks.length; i++) {
         const stock = currentStocks[i];
-        const currentPrice = toNumber(quotes[stock.symbol]?.price || 0);
+        const currentPrice = safeNumber(quotes[stock.symbol]?.price || 0);
         if (currentPrice <= 0) continue;
 
         const investedSoFar =
@@ -1582,11 +1498,24 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         // =========================
         if (stock.status === 'in-position' && stock.currentPosition) {
           let shouldSell = false;
+
+          const currentPnLPercent =
+            ((currentPrice - stock.currentPosition.entryPrice) /
+              stock.currentPosition.entryPrice) * 100;
+
+          const prevPeakPrice = stock.currentPosition.peakPrice || currentPrice;
+          const prevPeakPnL = stock.currentPosition.peakPnLPercent || 0;
+
+          const newPeakPrice = Math.max(prevPeakPrice, currentPrice);
+          const newPeakPnL = Math.max(prevPeakPnL, currentPnLPercent);
+
+          stock.currentPosition.peakPrice = newPeakPrice;
+          stock.currentPosition.peakPnLPercent = newPeakPnL;          
           // STEP 1: SELL FIRST
           const sellDecision = await evaluateSellDecision(
             stock.symbol,
             stock.currentPosition,
-            stock
+            currentPrice
           );
           shouldSell = sellDecision?.shouldSell;
           if (sellDecision?.sellScore !== undefined && sellDecision?.sellScore >= 40) {
@@ -1605,12 +1534,15 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
             const sharesToSell = Math.floor(
               stock.currentPosition.shares * sellPercent
             );
+            
+            if (sharesToSell < 1) return;
+
             if (sharesToSell > 0) {
               const sellPrice = toNumber(quotes[stock.symbol]?.price);
 
               const pnl = (sellPrice - stock.currentPosition.entryPrice) * sharesToSell;
 
-              const remainingShares = stock.currentPosition.shares - sharesToSell;
+              const remainingShares = Math.max(0, stock.currentPosition.shares - sharesToSell);
 
               const isFullExit = remainingShares <= 0;
 
@@ -1642,14 +1574,22 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
                 ...stock,
                 allocation: Math.max(newAllocation, 0),
 
-                status:
-                  stock.rinseRepeat && sellCount < (stock.maxRepeats || 5)
+                status: isFullExit
+                  ? (stock.rinseRepeat && sellCount < (stock.maxRepeats || 5)
                     ? 'monitoring'
-                    : 'completed',
+                    : 'completed')
+                  : 'in-position',
 
-                currentPosition: null,
+                currentPosition: isFullExit
+                  ? null
+                  : {
+                    ...stock.currentPosition,
+                    shares: remainingShares, // 🔥 CRITICAL FIX
+                    peakPrice: newPeakPrice,
+                    peakPnLPercent: newPeakPnL
+                  },
 
-                lastSellTime: now, // 🔥 cooldown anchor
+                lastSellTime: now,
 
                 lastAiDecision: {
                   action: 'Sell',
@@ -1671,7 +1611,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
             continue; // 🚨 CRITICAL: skip buy after sell
           } else {
             // Update lastAiDecision for in-position stocks not selling
-            console.log(`Holding ${stock.symbol}:`, sellDecision?.reason || "No sell signal");
+            //console.log(`Holding ${stock.symbol}:`, sellDecision?.reason || "No sell signal");
             currentStocks[i] = {
               ...stock,
               lastAiDecision: {
@@ -1730,7 +1670,9 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
                 currentPosition: {
                   ...stock.currentPosition,
                   shares: totalShares,
-                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4))
+                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
+                  peakPrice: newPeakPrice,
+                  peakPnLPercent: newPeakPnL
                 },
 
                 lastAiDecision: {
@@ -1753,7 +1695,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
               );
             } else {
               // 🔥 NO TRADE REASON TRACKING
-              console.log(`No Buy More for ${stock.symbol}:`, buyResult?.noTradeReasons || "No strong signal");
+              //console.log(`No Buy More for ${stock.symbol}:`, buyResult?.noTradeReasons || "No strong signal");
               currentStocks[i] = {
                 ...stock,
                 lastAiDecision: {
@@ -1817,7 +1759,9 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
                   entryPrice: buyResult.entryPrice,
                   shares: sharesToBuy,
                   entryTime: new Date(),
-                  thesis: buyResult.thesis
+                  thesis: buyResult.thesis,
+                  peakPrice: buyResult.entryPrice,
+                  peakPnLPercent: 0
                 },
 
                 lastAiDecision: {
@@ -1839,7 +1783,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
             }
             else {
               // 🔥 NO TRADE REASON TRACKING
-              console.log(`No buy for ${stock.symbol}: ${buyResult?.noTradeReasons?.join(', ') || "No strong signal"}`);
+              //console.log(`No buy for ${stock.symbol}: ${buyResult?.noTradeReasons?.join(', ') || "No strong signal"}`);
               currentStocks[i] = {
                 ...stock,
                 lastAiDecision: {
@@ -1918,6 +1862,10 @@ useEffect(() => {
   // helper
   // =========================
   // Safe number parsing with fallback
+  const safeNumber = (val: any, fallback = 0) => {
+  const num = Number(val);
+  return isNaN(num) ? fallback : num;
+};
   const toNumber = (value: string | number | undefined): number => {
     if (value === undefined || value === null) return 0;
     const num = typeof value === 'string' ? parseFloat(value) : value;
@@ -4022,7 +3970,9 @@ useEffect(() => {
 
                           const availableCash = stock.allocation || 0;
                           const sharesToBuy = Math.floor(availableCash / (result.entryPrice ?? 0));
-
+                          const entryPrice = result.entryPrice || 0;                         
+                          const peakPnLPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+                          const newPeakPnLPercent = Math.max(stock.currentPosition?.peakPnLPercent || 0, peakPnLPercent);
                           if (sharesToBuy < 1) return stock;
                           
                           return {
@@ -4032,7 +3982,9 @@ useEffect(() => {
                               shares: sharesToBuy,
                               entryPrice: result.entryPrice,
                               entryTime: new Date(),
-                              thesis: result.thesis
+                              thesis: result.thesis,
+                              peakPrice: result.entryPrice,
+                              peakPnLPercent: newPeakPnLPercent
                             },
                             tradeHistory: [
                               ...(stock.tradeHistory || []),

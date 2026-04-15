@@ -69,7 +69,7 @@ export const getCtsForSymbol = async (symbol: string) => {
         const breakoutResult = detectRectangleBreakout(ohlc, slicedData.v);
         var news = await getNewsSentiment(symbol) as any[] || [];
         // check rsi, macd, ema200, breakout, news sentiment and closes on console
-        console.log(`getctsForSymbol indicators for ${symbol} - RSI: ${rsi.slice(-1)[0]}, MACD: ${macd.slice(-1)[0]}, Signal: ${signal.slice(-1)[0]}, EMA200: ${ema200.slice(-1)[0]}, Breakout: ${breakoutResult ? breakoutResult.type : 'none'}, News Sentiment: ${news.length} items, Recent Closes: ${closes.slice(-5).map((c: number) => c.toFixed(2)).join(', ')}`);
+        //console.log(`getctsForSymbol indicators for ${symbol} - RSI: ${rsi.slice(-1)[0]}, MACD: ${macd.slice(-1)[0]}, Signal: ${signal.slice(-1)[0]}, EMA200: ${ema200.slice(-1)[0]}, Breakout: ${breakoutResult ? breakoutResult.type : 'none'}, News Sentiment: ${news.length} items, Recent Closes: ${closes.slice(-5).map((c: number) => c.toFixed(2)).join(', ')}`);
         // 2. Calculate CTS
         const result = await calculateFinalCTS(
             ohlc,

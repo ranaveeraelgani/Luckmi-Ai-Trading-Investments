@@ -1,25 +1,34 @@
-import {getCtsForSymbol} from '@/app/lib/evaluateAi/evaluateHelpers/getCtsForSymbol';
+import { getCtsForSymbol } from '@/app/lib/evaluateAi/evaluateHelpers/getCtsForSymbol';
 import { getMomentumState } from '../evaluateHelpers/getMomentumState';
 import { getTrendStage } from '../evaluateHelpers/getTrendStage';
 import { isFakeBreakout } from '../evaluateHelpers/isFakeBreakout';
-  // Smart Sell Decision - Uses real AI call with structured prompt
-  export const evaluateSellDecision = async (symbol: string, currentPosition: any, currentPrice: number) => {
+// Smart Sell Decision - Uses real AI call with structured prompt
+export const evaluateSellDecision = async (symbol: string, currentPosition: any, currentPrice: number) => {
     //console.log(`🔍 Evaluating SELL for ${symbol}`);
 
     try {
-      if (currentPrice <= 0) return { shouldSell: false, reason: "Invalid price" };
 
-      const pnl = (currentPrice - currentPosition.entryPrice) * currentPosition.shares;
-      const pnlPercent = ((currentPrice - currentPosition.entryPrice) / currentPosition.entryPrice) * 100;
+        if (currentPrice <= 0) return { shouldSell: false, reason: "Invalid price" };
+        const pnl = (currentPrice - currentPosition.entryPrice) * currentPosition.shares;
+        const pnlPercent = ((currentPrice - currentPosition.entryPrice) / currentPosition.entryPrice) * 100;
 
-      const indicatorData = await getCtsForSymbol(symbol);
-      const ctsScore = indicatorData.ctsScore;
-      const recentCloses = indicatorData.recentCloses;
+        const indicatorData = await getCtsForSymbol(symbol);
+        const normalizeCloses = (data: any) => {
+            if (Array.isArray(data)) return data.map(Number);
+
+            if (typeof data === "string") {
+                return data.split(',').map(Number);
+            }
+
+            return [];
+        };
+        const ctsScore = indicatorData.ctsScore;
+        const recentCloses = normalizeCloses(indicatorData.recentCloses);
         const momentumState = getMomentumState(indicatorData.macdArr ?? [], indicatorData.signalArr ?? []);
-        const trendStage = getTrendStage(indicatorData.closes, Number(indicatorData.ema200));
-        const fakeBreakout = isFakeBreakout(indicatorData.closes, indicatorData.volumes);
+        const trendStage = getTrendStage(recentCloses, Number(indicatorData.ema200));
+        const fakeBreakout = isFakeBreakout(recentCloses, indicatorData.volumes);
         // Ai prompt will decide to SELL or HOLD based on CTS, PnL, momentum, and trend context
-      const prompt = `You are a disciplined trading risk manager working alongside a systematic trading engine.
+        const prompt = `You are a disciplined trading risk manager working alongside a systematic trading engine.
 
 The system uses a Confluence Trading Score (CTS) as the primary signal for trend strength.
 Your role is to decide whether to EXIT (SELL) or HOLD based on risk, trend strength, and profit protection.
@@ -68,22 +77,22 @@ CONFIDENCE: [0-100]
 
       Decide now.`;
 
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
-      });
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+        });
 
-      let text = await res.text();
-      const textClean = text.trim().replace(/\s+/g, ' ');
+        let text = await res.text();
+        const textClean = text.trim().replace(/\s+/g, ' ');
 
-      const actionMatch = textClean.match(/ACTION:\s*(Sell|Hold)/i);
-      const reasonMatch = textClean.match(/REASON:\s*(.+?)(?=CONFIDENCE:|$)/is);
-      const confMatch = textClean.match(/CONFIDENCE:\s*(\d+)/i);
+        const actionMatch = textClean.match(/ACTION:\s*(Sell|Hold)/i);
+        const reasonMatch = textClean.match(/REASON:\s*(.+?)(?=CONFIDENCE:|$)/is);
+        const confMatch = textClean.match(/CONFIDENCE:\s*(\d+)/i);
 
-      const action = actionMatch ? actionMatch[1] : 'Hold';
-      const reason = reasonMatch ? reasonMatch[1].trim() : '';
-      const confidence = confMatch ? Number(confMatch[1]) : 50;
+        const action = actionMatch ? actionMatch[1] : 'Hold';
+        const reason = reasonMatch ? reasonMatch[1].trim() : '';
+        const confidence = confMatch ? Number(confMatch[1]) : 50;
 
         let sellScore = 0;
 
@@ -127,8 +136,8 @@ CONFIDENCE: [0-100]
                 i === 0 || v > arr[i - 1]
             );
 
-        if (makingHigherHighs) {
-            sellScore -= 5;
+        if (makingHigherHighs && isTrendStrong) {
+            sellScore -= 15;
         }
 
         // 🚨 FAKE BREAKOUT
@@ -145,9 +154,8 @@ CONFIDENCE: [0-100]
 
         // 💰 MAIN PROFIT (12%+)
         if (pnlPercent >= 12) {
-
-            if (isTrendStrong) {
-                sellScore -= 10;
+            if (isTrendStrong && pnlPercent >= 5) {
+                sellScore -= 20; // stronger hold bias
             }
             else if (isHealthyPullback) {
                 sellScore += 15;
@@ -156,22 +164,54 @@ CONFIDENCE: [0-100]
                 sellScore += 30;
             }
         }
-        
+        // 🔥 TRAILING PROFIT PROTECTION
+        if (currentPosition) {
+            const peakPrice = currentPosition.peakPrice || currentPrice;
+            const drawdownPercent = ((currentPrice - peakPrice) / peakPrice) * 100;
+            const peakPnL = currentPosition.peakPnLPercent || 0;
+            
+            // check for drawdown after a significant peak to protect profits, with dynamic thresholds based on how big the unrealized gain is
+        //     console.log(`Drawdown: ${drawdownPercent.toFixed(2)}% | PeakPnL: ${peakPnL.toFixed(2)}%`,
+        //  'stock:', symbol, 'currentPrice:', currentPrice, 'peakPrice:', peakPrice, 'entryPrice:', currentPosition.entryPrice);
+            // 🎯 DYNAMIC TRAILING RULES
+            // Big winner → tighter leash
+            if (peakPnL >= 20 && drawdownPercent <= -5) {
+                console.log("Trailing stop hit (big winner)");
+                sellScore += 40;
+            }
+            // Medium winner
+            else if (peakPnL >= 12 && drawdownPercent <= -7) {
+                console.log("Trailing stop hit (medium winner)");
+                sellScore += 30;
+            }
+            // Small winner
+            else if (peakPnL >= 6 && drawdownPercent <= -10) {
+                console.log("Trailing stop hit (small winner)");
+                sellScore += 20;
+            }
+        }
+        // avoids immediate selling on small pullback   
+        const timeInTradeMinutes = (Date.now() - new Date(currentPosition.entryTime).getTime()) / (1000 * 60);
+
+        // Avoid early exits (noise protection)
+        if (timeInTradeMinutes < 30 && pnlPercent > 0) {
+            sellScore -= 10;
+        }
         const shouldSell = sellScore >= 50;
         const ctsBreakdown = indicatorData.breakdown;
-      //console.log(`Sell Decision for ${symbol}: ${action} (Confidence: ${confidence})`);
+        //console.log(`Sell Decision for ${symbol}: ${action} (Confidence: ${confidence})`);
 
-      return {
-        shouldSell,
-        reason,
-        confidence,
-        ctsScore, 
-        sellScore,
-        ctsBreakdown
-      };
+        return {
+            shouldSell,
+            reason,
+            confidence,
+            ctsScore,
+            sellScore,
+            ctsBreakdown
+        };
 
     } catch (err) {
-      console.error(`Sell evaluation failed for ${symbol}`, err);
-      return { shouldSell: false, reason: "Evaluation error" };
+        console.error(`Sell evaluation failed for ${symbol}`, err);
+        return { shouldSell: false, reason: "Evaluation error" };
     }
-  };
+};
