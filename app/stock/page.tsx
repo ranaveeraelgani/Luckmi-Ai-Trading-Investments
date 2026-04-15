@@ -2584,6 +2584,7 @@ useEffect(() => {
                             const priceChange = toNumber(quotes[stock.symbol]?.change || 0);
                             const isUp = priceChange >= 0;
                             const percentChange = parseFloat(quotes[stock.symbol]?.percentChange);
+                            const totalNumberOfStocks = autoStocks.length;
                             return (
                               <div key={stock.id} className="bg-[#11151c] border border-gray-700 rounded-3xl p-6">
                                 <div className="flex justify-between items-start">
@@ -2621,6 +2622,14 @@ useEffect(() => {
                                   <div>
                                     <div className="text-gray-400 text-xs">Total Allocation</div>
                                     <div className="font-mono font-medium">${(stock.allocation || 0).toLocaleString()}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-gray-400 text-xs">Total Shares</div>
+                                    <div className="font-mono">{stock.currentPosition ? stock.currentPosition.shares : 0}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-gray-400 text-xs">Avg Price</div>
+                                    <div className="font-mono">${stock.currentPosition ? stock.currentPosition.entryPrice.toFixed(2) : '—'}</div>
                                   </div>
                                   <div>
                                     <div className="text-gray-400 text-xs">Invested</div>
