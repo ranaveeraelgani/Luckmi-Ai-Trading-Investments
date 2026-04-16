@@ -1139,71 +1139,8 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
       console.error('Failed to fetch SPY data for relative strength:', err);
       setSpyData([]); // fallback
     }
-  };
+  };  
 
-  // // Calculate Mini CTS for ALL watchlist items - exactly same logic as main CTS
-  // const calculateAllWatchlistCts = async () => {
-  //   if (watchlist.length === 0) return;
-
-  //   const newScores: Record<string, number> = { ...watchlistCtsScores };
-
-  //   for (const symbol of watchlist) {
-  //     try {
-  //       // Light & fast: ~40 days of daily candles (enough for reliable EMA, RSI, structure)
-  //       const fromDate = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  //       const toDate = new Date().toISOString().split('T')[0];
-
-  //       const res = await fetch(
-  //         `/api/polygon-candles?symbol=${symbol}&multiplier=1&timespan=day&from=${fromDate}&to=${toDate}`
-  //       );
-
-  //       if (!res.ok) {
-  //         newScores[symbol] = 50;
-  //         continue;
-  //       }
-
-  //       const data = await res.json();
-
-  //       if (!data.c || data.c.length < 30) {
-  //         newScores[symbol] = 50;
-  //         continue;
-  //       }
-
-  //       const closes = data.c;
-  //       const volumes = data.v || [];
-  //       const ohlc = data.t.map((t: number, i: number) => ({
-  //         x: new Date(t * 1000),
-  //         o: data.o[i],
-  //         h: data.h[i],
-  //         l: data.l[i],
-  //         c: data.c[i],
-  //       }));
-
-  //       // Call your REAL calculateFinalCTS function exactly as you do for the selected stock
-  //       // This ensures mini CTS = main CTS when the stock is selected
-  //       const result = calculateFinalCTS(
-  //         ohlc,           // ohlc data
-  //         closes,         // closes array
-  //         [],             // macd (optional - can compute inside if needed)
-  //         [],             // rsi
-  //         closes.map(() => 0), // dummy ema200 (your function likely computes it)
-  //         volumes,        // volume
-  //         null,           // breakout (skip for speed)
-  //         [],             // news
-  //         []              // spy data
-  //       );
-
-  //       // Use the exact same final score your main calculation returns
-  //       newScores[symbol] = Math.round(result.finalScore ?? result.score ?? 50);
-
-  //     } catch (err) {
-  //       console.warn(`Mini CTS failed for ${symbol}`, err);
-  //       newScores[symbol] = 50; // safe fallback
-  //     }
-  //   }
-
-  //   setWatchlistCtsScores(newScores);
-  // };
   // Lightweight CTS for watchlist items (fast enough to run for all tickers)
   const calculateMiniCTS = (closes: number[], ema200: number[], lastRSI: number, volumeData: number[]) => {
     if (closes.length < 10) return 45;
@@ -1257,214 +1194,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     }));
 
     addToAutoLog(`💰 BUY MORE ${symbol} — +$${additionalAmount}`);
-  };
-
-  // Main Final evaluateStockForBuy/Sell - Rich Prompt + Early Cash Check
-//   const evaluateStockForBuy = async (symbol: string) => {
-//     //console.log(`🔍 Evaluating BUY for ${symbol}`);
-
-//     try {
-//       const currentPrice = toNumber(quotes[symbol]?.price);
-//       if (currentPrice <= 0) return { shouldBuy: false, reason: "Invalid price" };
-
-//       const autoStock = autoStocks.find(s => s.symbol === symbol);
-//       if (!autoStock) return { shouldBuy: false, reason: "Stock not found" };
-
-//       const investedSoFar = (autoStock.currentPosition?.shares || 0) * (autoStock.currentPosition?.entryPrice || 0);
-//       const availableCash = (autoStock.allocation || 0) - investedSoFar;
-
-//       if (availableCash < currentPrice) {
-//         //console.log(`Skipping AI for ${symbol} - insufficient cash`);
-//         return { shouldBuy: false, reason: "Insufficient remaining cash" };
-//       }
-
-//       const indicatorData = await getCtsForSymbol(symbol);
-//       const ctsScore = indicatorData.ctsScore;
-//       const lastRSI = indicatorData.rsi;
-//       const lastMACD = indicatorData.macd;
-//       const lastSignal = indicatorData.signal;
-//       const ema200 = indicatorData.ema200;
-//       const recentCloses = indicatorData.recentCloses;
-
-//       const customGuidance = autoStock.customGuidance || "No special instruction.";
-
-//       const prompt = `You are a disciplined trading analyst assisting a systematic trading engine.
-
-// The system already uses a Confluence Trading Score (CTS) to determine position sizing.
-// Your role is NOT to decide position size, but to VALIDATE or BLOCK trades based on risk and context.
-
-// CTS Zones (PRIMARY DRIVER):
-// - 85+: Very Strong (large position)
-// - 75–84: Strong (medium-large position)
-// - 65–74: Moderate (medium position)
-// - 55–64: Weak (small starter)
-// - Below 55: Avoid
-
-// Your Responsibilities:
-// 1. Start by stating the CTS score and its zone for ${symbol}.
-// 2. Do NOT override CTS unless there is a strong, clear risk.
-// 3. Only recommend HOLD if there is a meaningful reason:
-//    - Weak or deteriorating momentum
-//    - Bearish MACD or RSI divergence
-//    - Price below 200 EMA (weak trend)
-//    - Choppy or unstable price action
-//    - Any risk from user guidance
-// 4. If CTS is strong (75+), default to BUY unless there is a clear red flag.
-// 5. Be decisive but not overly cautious.
-
-// Current Data:
-// Stock: ${symbol}
-// CTS Score: ${ctsScore}
-// Price: $${currentPrice.toFixed(2)}
-// RSI: ${lastRSI}
-// MACD: ${lastMACD} (Signal: ${lastSignal})
-// 200 EMA: ${ema200}
-// Recent closes: ${recentCloses}
-// User Guidance: ${customGuidance}
-// Position Status: ${autoStock.currentPosition ? 'Already in position (considering add)' : 'New position'}
-
-// Format exactly:
-// ACTION: Buy or Hold
-// REASON: [2-3 sentences. Start with CTS score and zone, then validate or flag risks.]
-// TRADE THESIS: [1 sentence]
-// CONFIDENCE: [0-100]
-
-//       Decide now.`;
-
-//       const res = await fetch('/api/chat', {
-//         method: 'POST',
-//         headers: { 'Content-Type': 'application/json' },
-//         body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
-//       });
-
-//       let text = await res.text();
-//       const textClean = text.trim().replace(/\s+/g, ' ');
-
-//       const actionMatch = textClean.match(/ACTION:\s*(Buy|Hold)/i);
-//       const reasonMatch = textClean.match(/REASON:\s*(.+?)(?=TRADE THESIS:|CONFIDENCE:|$)/is);
-//       const thesisMatch = textClean.match(/TRADE THESIS:\s*(.+?)(?=CONFIDENCE:|$)/is);
-//       const confMatch = textClean.match(/CONFIDENCE:\s*(\d+)/i);
-
-//       const action = actionMatch ? actionMatch[1] : 'Hold';
-//       const reason = reasonMatch ? reasonMatch[1].trim() : '';
-//       const thesis = thesisMatch ? thesisMatch[1].trim() : 'Strong confluence detected.';
-//       const confidence = confMatch ? Number(confMatch[1]) : 60;
-
-//       const shouldBuy = ctsScore >= 65 && action !== 'Hold';
-//       const breakdown = indicatorData.breakdown;
-//       //console.log(`AI Decision for ${symbol}: ${action} (CTS: ${ctsScore}, Confidence: ${confidence})`);
-//       const noTradeReasons = getNoTradeReasons(
-//         ctsScore,
-//         Number(lastRSI),
-//         Number(lastMACD)
-//       );
-//       return {
-//         shouldBuy,
-//         entryPrice: shouldBuy ? currentPrice : undefined,
-//         thesis: thesis.substring(0, 200),
-//         confidence,
-//         ctsScore,
-//         breakdown,
-//         noTradeReasons
-//       };
-
-//     } catch (err) {
-//       console.error(`Buy evaluation failed for ${symbol}`, err);
-//       return { shouldBuy: false, reason: "Evaluation error" };
-//     }
-//   };
-  // Smart Sell Decision - Uses real AI call with structured prompt
-//   const evaluateSellDecision = async (symbol: string, currentPosition: any, stock: any) => {
-//     //console.log(`🔍 Evaluating SELL for ${symbol}`);
-
-//     try {
-//       const currentPrice = toNumber(quotes[symbol]?.price);
-//       if (currentPrice <= 0) return { shouldSell: false, reason: "Invalid price" };
-
-//       const pnl = (currentPrice - currentPosition.entryPrice) * currentPosition.shares;
-//       const pnlPercent = ((currentPrice - currentPosition.entryPrice) / currentPosition.entryPrice) * 100;
-
-//       const indicatorData = await getCtsForSymbol(symbol);
-//       const ctsScore = indicatorData.ctsScore;
-
-//       const prompt = `You are a disciplined trading risk manager working alongside a systematic trading engine.
-
-// The system uses a Confluence Trading Score (CTS) as the primary signal for trend strength.
-// Your role is to decide whether to EXIT (SELL) or HOLD based on risk, trend strength, and profit protection.
-
-// CTS Zones:
-// - 85+: Very Strong Trend (hold unless clear reversal)
-// - 75–84: Strong Trend (hold, consider partial profit if extended)
-// - 65–74: Moderate (monitor closely)
-// - 55–64: Weak (consider exit if no momentum)
-// - Below 55: Bearish (exit preferred)
-
-// Current Position:
-// Stock: ${symbol}
-// Entry Price: $${currentPosition.entryPrice.toFixed(2)}
-// Current Price: $${currentPrice.toFixed(2)}
-// Unrealized P&L: $${pnl.toFixed(2)} (${pnlPercent.toFixed(1)}%)
-// CTS Score: ${ctsScore}
-
-// Guidelines:
-// 1. Always start reasoning with CTS score and its zone.
-// 2. CTS is the PRIMARY trend signal:
-//    - If CTS < 55 → bias toward SELL
-//    - If CTS > 75 → bias toward HOLD (let winner run)
-// 3. Protect capital:
-//    - If PnL ≤ -6% and CTS is weak → SELL
-// 4. Protect profits:
-//    - If strong profit (>8–12%) AND momentum weakens → SELL
-// 5. Do NOT sell strong trends too early:
-//    - High CTS + positive PnL → HOLD unless clear reversal
-// 6. Only recommend HOLD if trend and structure still justify staying in.
-
-// Format exactly:
-// ACTION: Sell or Hold
-// REASON: [2-3 sentences. Must start with CTS score and zone for ${symbol}, then justify decision with PnL + trend context.]
-// CONFIDENCE: [0-100]
-
-//       Decide now.`;
-
-//       const res = await fetch('/api/chat', {
-//         method: 'POST',
-//         headers: { 'Content-Type': 'application/json' },
-//         body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
-//       });
-
-//       let text = await res.text();
-//       const textClean = text.trim().replace(/\s+/g, ' ');
-
-//       const actionMatch = textClean.match(/ACTION:\s*(Sell|Hold)/i);
-//       const reasonMatch = textClean.match(/REASON:\s*(.+?)(?=CONFIDENCE:|$)/is);
-//       const confMatch = textClean.match(/CONFIDENCE:\s*(\d+)/i);
-
-//       const action = actionMatch ? actionMatch[1] : 'Hold';
-//       const reason = reasonMatch ? reasonMatch[1].trim() : '';
-//       const confidence = confMatch ? Number(confMatch[1]) : 50;
-//       const takeProfit =
-//         pnlPercent > 10 && ctsScore < 70;
-//       const shouldSell =
-//         action === 'Sell' ||
-//         ctsScore < 50 ||
-//         (pnlPercent <= -6 && ctsScore < 60) ||
-//         takeProfit;
-
-//       //console.log(`Sell Decision for ${symbol}: ${action} (Confidence: ${confidence})`);
-
-//       return {
-//         shouldSell,
-//         reason,
-//         confidence,
-//         ctsScore
-//       };
-
-//     } catch (err) {
-//       console.error(`Sell evaluation failed for ${symbol}`, err);
-//       return { shouldSell: false, reason: "Evaluation error" };
-//     }
-//   };
-
+  };  
 
   // Final Auto Trading Monitoring Loop with Compounding
   useEffect(() => {
@@ -1812,7 +1542,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         console.log('💾 Updating autoStocks after trade(s)');
       }
       setAutoStocks(currentStocks);
-    }, 10000); // 10 mins for testing
+    }, 600000); // 10 mins for testing
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
@@ -2670,16 +2400,24 @@ useEffect(() => {
                                   {!openStocks[stock.id] && (
                                     <div className="mt-4 grid grid-cols-4 gap-3 text-xs text-gray-300">
                                       {/* add stock symbol */}
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Symbol</div>
                                         <div className="font-mono">{stock.symbol}</div>
                                       </div>
-                                      <div>
+                                      {/* current price */}
+                                      <div className="flex flex-col items-center">
+                                        <div className="text-gray-500">Price</div>
+                                        <div className={`text-xs font-mono font-semibold flex items-center gap-1 justify-end ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            ${currentPrice.toFixed(2)}
+                                            <span className="text-xs">{isUp ? '↑' : '↓'}</span>
+                                          </div>
+                                      </div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Shares</div>
                                         <div className="font-mono">{totalShares}</div>
                                       </div>
 
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Allocated</div>
                                         <div className="font-mono">
                                           ${(stock.allocation || 0).toFixed(2)}
@@ -2693,7 +2431,7 @@ useEffect(() => {
                                         </div>
                                       </div>
 
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">$Available</div>
                                         <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                                           ${Available$.toFixed(0)}
@@ -2726,11 +2464,20 @@ useEffect(() => {
                                           <div className="text-xs text-gray-400">Symbol</div>
                                           <div className="font-mono font-medium">{stock.symbol}</div>
                                         </div>
+                                        <div className="flex flex-col items-center">
+                                          <div className={`text-xl font-mono font-semibold flex items-center gap-1 justify-end ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            ${currentPrice.toFixed(2)}
+                                            <span className="text-lg">{isUp ? '↑' : '↓'}</span>
+                                          </div>
+                                          <div className={`text-xs ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            {isUp ? '+' : ''}{priceChange.toFixed(2)} ({percentChange.toFixed(1)}%)
+                                          </div>                                         
+                                        </div>
                                         <div className={`px-3 py-0.5 text-xs rounded-full ${stock.status === 'in-position'
                                           ? 'bg-emerald-500/20 text-emerald-400'
                                           : 'bg-gray-700 text-gray-400'
                                           }`}>
-                                          {stock.status === 'in-position' ? 'In Position' : 'Monitoring'}
+                                          {stock.status === 'in-position' ? 'InPosition' : 'Monitoring'}
                                         </div>
                                       </div>
                                     </div>

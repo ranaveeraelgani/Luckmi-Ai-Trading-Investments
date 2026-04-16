@@ -3,12 +3,13 @@ import { getMomentumState } from '../evaluateHelpers/getMomentumState';
 import { getTrendStage } from '../evaluateHelpers/getTrendStage';
 import { isFakeBreakout } from '../evaluateHelpers/isFakeBreakout';
 // Smart Sell Decision - Uses real AI call with structured prompt
-export const evaluateSellDecision = async (symbol: string, currentPosition: any, currentPrice: number) => {
+export const evaluateSellDecision = async (symbol: string, currentPosition: any, currentPriceStock: number) => {
     //console.log(`🔍 Evaluating SELL for ${symbol}`);
 
     try {
-
-        if (currentPrice <= 0) return { shouldSell: false, reason: "Invalid price" };
+        //console.log('current price', currentPriceStock, 'entry price', currentPosition.entryPrice);
+        if (currentPriceStock <= 0) return { shouldSell: false, reason: "Invalid price" };
+        const currentPrice = Number(currentPriceStock);
         const pnl = (currentPrice - currentPosition.entryPrice) * currentPosition.shares;
         const pnlPercent = ((currentPrice - currentPosition.entryPrice) / currentPosition.entryPrice) * 100;
 
