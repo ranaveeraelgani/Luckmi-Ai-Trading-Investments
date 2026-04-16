@@ -1542,7 +1542,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         console.log('💾 Updating autoStocks after trade(s)');
       }
       setAutoStocks(currentStocks);
-    }, 600000); // 10 mins for testing
+    }, 10000); // 10 mins for testing
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
@@ -2400,16 +2400,24 @@ useEffect(() => {
                                   {!openStocks[stock.id] && (
                                     <div className="mt-4 grid grid-cols-4 gap-3 text-xs text-gray-300">
                                       {/* add stock symbol */}
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Symbol</div>
                                         <div className="font-mono">{stock.symbol}</div>
                                       </div>
-                                      <div>
+                                      {/* current price */}
+                                      <div className="flex flex-col items-center">
+                                        <div className="text-gray-500">Price</div>
+                                        <div className={`text-xs font-mono font-semibold flex items-center gap-1 justify-end ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            ${currentPrice.toFixed(2)}
+                                            <span className="text-xs">{isUp ? '↑' : '↓'}</span>
+                                          </div>
+                                      </div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Shares</div>
                                         <div className="font-mono">{totalShares}</div>
                                       </div>
 
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Allocated</div>
                                         <div className="font-mono">
                                           ${(stock.allocation || 0).toFixed(2)}
@@ -2423,7 +2431,7 @@ useEffect(() => {
                                         </div>
                                       </div>
 
-                                      <div>
+                                      <div className="flex flex-col items-center">
                                         <div className="text-gray-500">$Available</div>
                                         <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                                           ${Available$.toFixed(0)}
@@ -2456,11 +2464,20 @@ useEffect(() => {
                                           <div className="text-xs text-gray-400">Symbol</div>
                                           <div className="font-mono font-medium">{stock.symbol}</div>
                                         </div>
+                                        <div className="flex flex-col items-center">
+                                          <div className={`text-xl font-mono font-semibold flex items-center gap-1 justify-end ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            ${currentPrice.toFixed(2)}
+                                            <span className="text-lg">{isUp ? '↑' : '↓'}</span>
+                                          </div>
+                                          <div className={`text-xs ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            {isUp ? '+' : ''}{priceChange.toFixed(2)} ({percentChange.toFixed(1)}%)
+                                          </div>                                         
+                                        </div>
                                         <div className={`px-3 py-0.5 text-xs rounded-full ${stock.status === 'in-position'
                                           ? 'bg-emerald-500/20 text-emerald-400'
                                           : 'bg-gray-700 text-gray-400'
                                           }`}>
-                                          {stock.status === 'in-position' ? 'In Position' : 'Monitoring'}
+                                          {stock.status === 'in-position' ? 'InPosition' : 'Monitoring'}
                                         </div>
                                       </div>
                                     </div>
