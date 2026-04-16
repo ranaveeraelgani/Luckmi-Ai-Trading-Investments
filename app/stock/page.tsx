@@ -1542,7 +1542,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
         console.log('💾 Updating autoStocks after trade(s)');
       }
       setAutoStocks(currentStocks);
-    }, 10000); // 10 mins for testing
+    }, 600000); // 10 mins for testing
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
