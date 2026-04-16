@@ -1198,176 +1198,193 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
 
   // Final Auto Trading Monitoring Loop with Compounding
   useEffect(() => {
-    if (!isAutoMonitoring || autoStocks.length === 0) {
-      console.log('Auto monitoring: disabled or no stocks');
-      return;
-    }
+    if (!isAutoMonitoring || autoStocks.length === 0) return;
 
-    console.log(`🚀 Auto monitoring started for ${autoStocks.length} stocks`);
-    // autoStocks time interval - every 10 minutes
     const interval = setInterval(async () => {
-      console.log('🔄 Auto trade check running...');
-
       let hasChanges = false;
-     const currentStocks = [...autoStocksRef.current];
+      const currentStocks = [...autoStocksRef.current];
 
       for (let i = 0; i < currentStocks.length; i++) {
         const stock = currentStocks[i];
+
         const currentPrice = safeNumber(quotes[stock.symbol]?.price || 0);
         if (currentPrice <= 0) continue;
 
+        const now = Date.now();
+
+        // =========================
+        // 🔒 PRICE MOVEMENT FILTER
+        // =========================
+        const lastPrice = stock.lastEvaluatedPrice || currentPrice;
+        const priceChangePercent = Math.abs(
+          ((currentPrice - lastPrice) / lastPrice) * 100
+        );
+
+        if (priceChangePercent < 0.3) continue;
+
+        // =========================
+        // 🔒 COOLDOWN + FLIP PROTECTION
+        // =========================
+        const COOLDOWN_MS = 30 * 60 * 1000;
+        const FLIP_COOLDOWN = 30 * 60 * 1000;
+
+        const lastSellTime = stock.lastSellTime || 0;
+        const inCooldown = now - lastSellTime < COOLDOWN_MS;
+
+        const flipBlocked =
+          stock.lastAiDecision?.action === 'Sell' &&
+          stock.lastSellTime &&
+          now - new Date(stock.lastSellTime).getTime() < FLIP_COOLDOWN;
+
+        if (flipBlocked) continue;
+
+        // =========================
+        // 💰 POSITION DATA
+        // =========================
         const investedSoFar =
           (stock.currentPosition?.shares || 0) *
           (stock.currentPosition?.entryPrice || 0);
 
         const availableCash = (stock.allocation || 0) - investedSoFar;
 
-        const now = Date.now();
-
-        // ✅ Cooldown check (default 5 min)
-        const COOLDOWN_MS = 20 * 60 * 1000; // 2x loop (ideal) because useEffect run every 10 minutes, but this ensures we don't buy immediately after a sell if the loop runs faster than expected for any reason. It also prevents rapid-fire decisions in volatile conditions.
-        const lastSellTime = stock.lastSellTime || 0;
-        const inCooldown = now - lastSellTime < COOLDOWN_MS;
-
-        // Count only sells (fix)
-        const sellCount = (stock.tradeHistory || []).filter((t: any) => t.type === 'sell').length;
-
         // =========================
         // 🟢 CASE 1: IN POSITION
         // =========================
         if (stock.status === 'in-position' && stock.currentPosition) {
-          let shouldSell = false;
 
-          const currentPnLPercent =
-            ((currentPrice - stock.currentPosition.entryPrice) /
-              stock.currentPosition.entryPrice) * 100;
+          const entryPrice = stock.currentPosition.entryPrice;
+          const shares = stock.currentPosition.shares;
 
-          const prevPeakPrice = stock.currentPosition.peakPrice || currentPrice;
+          const pnlPercent =
+            ((currentPrice - entryPrice) / entryPrice) * 100;
+
+          // 🔥 UPDATE PEAK
+          const prevPeak = stock.currentPosition.peakPrice || currentPrice;
           const prevPeakPnL = stock.currentPosition.peakPnLPercent || 0;
 
-          const newPeakPrice = Math.max(prevPeakPrice, currentPrice);
-          const newPeakPnL = Math.max(prevPeakPnL, currentPnLPercent);
+          const newPeakPrice = Math.max(prevPeak, currentPrice);
+          const newPeakPnL = Math.max(prevPeakPnL, pnlPercent);
 
-          stock.currentPosition.peakPrice = newPeakPrice;
-          stock.currentPosition.peakPnLPercent = newPeakPnL;          
-          // STEP 1: SELL FIRST
+          // =========================
+          // ⏱ MIN HOLD PROTECTION
+          // =========================
+          const MIN_HOLD = 20 * 60 * 1000;
+          const inMinHold =
+            Date.now() - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
+
+          // =========================
+          // 🔴 SELL EVALUATION
+          // =========================
           const sellDecision = await evaluateSellDecision(
             stock.symbol,
             stock.currentPosition,
             currentPrice
           );
-          shouldSell = sellDecision?.shouldSell;
-          if (sellDecision?.sellScore !== undefined && sellDecision?.sellScore >= 40) {
-            const aiDecision = await evaluateSellDecision( stock.symbol,
-            stock.currentPosition,
-            stock
-          );
-            if (aiDecision?.shouldSell) {
-              shouldSell = true;
-              console.log(`AI SELL signal for ${stock.symbol}:`, aiDecision.reason);
-            }
+
+          let shouldSell = sellDecision?.shouldSell;
+
+          // 🔥 enforce min hold (except hard stop)
+          if (inMinHold && pnlPercent > -6) {
+            shouldSell = false;
           }
+
           if (shouldSell) {
-            const sellPercent = getSellSizePercent(sellDecision?.sellScore || 80);
+            const sellPercent = getSellSizePercent(sellDecision.sellScore || 80);
 
-            const sharesToSell = Math.floor(
-              stock.currentPosition.shares * sellPercent
-            );
-            
-            if (sharesToSell < 1) return;
+            let sharesToSell = Math.floor(shares * sellPercent);
 
-            if (sharesToSell > 0) {
-              const sellPrice = toNumber(quotes[stock.symbol]?.price);
-
-              const pnl = (sellPrice - stock.currentPosition.entryPrice) * sharesToSell;
-
-              const remainingShares = Math.max(0, stock.currentPosition.shares - sharesToSell);
-
-              const isFullExit = remainingShares <= 0;
-
-              const newTradeEntry = {
-                id: Date.now().toString(),
-                type: isFullExit ? 'sell' : 'partial_sell',
-                time: new Date(),
-                shares: sharesToSell,
-                price: sellPrice,
-                amount: sellPrice * sharesToSell,
-                pnl,
-                sellDecisionScore: sellDecision?.sellScore,
-                sellPercent,
-                reason: sellDecision.reason || "AI sell signal",
-                confidence: sellDecision.confidence || 60,
-
-                ctsScore: sellDecision?.ctsScore,
-                ctsBreakdown: sellDecision?.ctsBreakdown,
-
-                entryPrice: stock.currentPosition.entryPrice,
-                entryTime: stock.currentPosition.entryTime
-              };
-
-              const newAllocation = stock.compoundProfits
-                ? (stock.allocation || 0) + pnl
-                : (stock.allocation || 0);
-
-              currentStocks[i] = {
-                ...stock,
-                allocation: Math.max(newAllocation, 0),
-
-                status: isFullExit
-                  ? (stock.rinseRepeat && sellCount < (stock.maxRepeats || 5)
-                    ? 'monitoring'
-                    : 'completed')
-                  : 'in-position',
-
-                currentPosition: isFullExit
-                  ? null
-                  : {
-                    ...stock.currentPosition,
-                    shares: remainingShares, // 🔥 CRITICAL FIX
-                    peakPrice: newPeakPrice,
-                    peakPnLPercent: newPeakPnL
-                  },
-
-                lastSellTime: now,
-
-                lastAiDecision: {
-                  action: 'Sell',
-                  reason: sellDecision.reason || "AI sell signal",
-                  confidence: sellDecision.confidence || 60,
-                  timestamp: new Date(),
-                  ctsBreakdown: sellDecision?.ctsBreakdown,
-                  ctsScore: sellDecision?.ctsScore
-                },
-
-                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
-              };
-
-              hasChanges = true;
-              addToAutoLog(
-                `🔴 AUTO SELL ${stock.symbol} @ $${sellPrice.toFixed(2)} | PnL: $${pnl.toFixed(2)}`
-              );
+            if (shares <= 5 || sharesToSell < 1) {
+              sharesToSell = shares;
             }
-            continue; // 🚨 CRITICAL: skip buy after sell
-          } else {
-            // Update lastAiDecision for in-position stocks not selling
-            //console.log(`Holding ${stock.symbol}:`, sellDecision?.reason || "No sell signal");
+
+            if (sharesToSell <= 0) continue;
+
+            const sellPrice = currentPrice;
+
+            const pnl = (sellPrice - entryPrice) * sharesToSell;
+            const remainingShares = Math.max(0, shares - sharesToSell);
+            const isFullExit = remainingShares === 0;
+
+            const newTrade = {
+              id: Date.now().toString(),
+              type: isFullExit ? 'sell' : 'partial_sell',
+              time: new Date(),
+              shares: sharesToSell,
+              price: sellPrice,
+              amount: sellPrice * sharesToSell,
+              pnl,
+              sellDecisionScore: sellDecision.sellScore,
+              reason: sellDecision.reason,
+              confidence: sellDecision.confidence,
+              ctsScore: sellDecision.ctsScore,
+              ctsBreakdown: sellDecision.ctsBreakdown,
+            };
+
+            const newAllocation = stock.compoundProfits
+              ? (stock.allocation || 0) + pnl
+              : stock.allocation;
+
             currentStocks[i] = {
               ...stock,
-              lastAiDecision: {
-                action: 'Hold',
-                reason: sellDecision?.reason || "No sell signal detected",
-                confidence: sellDecision?.confidence || 50,
-                timestamp: new Date(),
-                ctsScore: sellDecision?.ctsScore || null
-              }
-            };
-          }            
+              allocation: Math.max(newAllocation, 0),
 
-          // 🔥 STEP 2: BUY MORE (only if NOT selling + NOT in cooldown)
+              status: isFullExit
+                ? (stock.rinseRepeat ? 'monitoring' : 'completed')
+                : 'in-position',
+
+              currentPosition: isFullExit
+                ? null
+                : {
+                  ...stock.currentPosition,
+                  shares: remainingShares,
+                  peakPrice: newPeakPrice,
+                  peakPnLPercent: newPeakPnL,
+                },
+
+              lastSellTime: now,
+              lastEvaluatedPrice: currentPrice,
+
+              lastAiDecision: {
+                action: 'Sell',
+                reason: sellDecision.reason,
+                confidence: sellDecision.confidence,
+                timestamp: new Date(),
+                ctsScore: sellDecision.ctsScore,
+              },
+
+              tradeHistory: [...(stock.tradeHistory || []), newTrade],
+            };
+
+            hasChanges = true;
+            continue; // 🔥 NEVER BUY AFTER SELL
+          }
+
+          // =========================
+          // 🟡 HOLD UPDATE
+          // =========================
+          currentStocks[i] = {
+            ...stock,
+            currentPosition: {
+              ...stock.currentPosition,
+              peakPrice: newPeakPrice,
+              peakPnLPercent: newPeakPnL,
+            },
+            lastEvaluatedPrice: currentPrice,
+          };
+
+          // =========================
+          // 🟢 BUY MORE
+          // =========================
           if (!inCooldown && availableCash >= currentPrice) {
-            const buyResult = await evaluateStockForBuy(stock.symbol, autoStocks, currentPrice);
+
+            const buyResult = await evaluateStockForBuy(
+              stock.symbol,
+              autoStocks,
+              currentPrice
+            );
 
             if (buyResult?.shouldBuy && buyResult.entryPrice) {
+
               const capitalToUse = getSmartPositionSize(
                 buyResult.ctsScore,
                 availableCash,
@@ -1377,176 +1394,117 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
 
               const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
               if (sharesToBuy < 1) continue;
-              if (capitalToUse < buyResult.entryPrice * 0.8) continue; // ensure we're using enough capital to justify the trade, skip noisey trades
 
-              const oldShares = stock.currentPosition.shares || 0;
-              const oldEntryPrice = stock.currentPosition.entryPrice || 0;
-
-              const oldCost = oldShares * oldEntryPrice;
+              const oldShares = shares;
+              const oldCost = oldShares * entryPrice;
               const newCost = sharesToBuy * buyResult.entryPrice;
 
               const totalShares = oldShares + sharesToBuy;
-              const newAverageEntryPrice = (oldCost + newCost) / totalShares;
-
-              const newTradeEntry = {
-                id: Date.now().toString(),
-                type: 'buy_more',
-                time: new Date(),
-                shares: sharesToBuy,
-                price: buyResult.entryPrice,
-                amount: newCost,
-
-                reason: buyResult.thesis || "AI buy signal",
-                confidence: buyResult.confidence || 70,
-
-                ctsScore: buyResult.ctsScore,
-                ctsBreakdown: buyResult.breakdown,
-                noTradeReasons: buyResult.noTradeReasons || []
-              };
+              const newAvg = (oldCost + newCost) / totalShares;
 
               currentStocks[i] = {
                 ...stock,
                 currentPosition: {
                   ...stock.currentPosition,
                   shares: totalShares,
-                  entryPrice: parseFloat(newAverageEntryPrice.toFixed(4)),
-                  peakPrice: newPeakPrice,
-                  peakPnLPercent: newPeakPnL
+                  entryPrice: parseFloat(newAvg.toFixed(4)),
                 },
 
                 lastAiDecision: {
                   action: 'Buy More',
-                  reason: buyResult.thesis || "Scaling into strength",
-                  confidence: buyResult.confidence || 70,
+                  reason: buyResult.thesis,
+                  confidence: buyResult.confidence,
                   timestamp: new Date(),
-                  ctsBreakdown: buyResult.breakdown,
-                  noTradeReasons: buyResult.noTradeReasons || [],
-                  ctsScore: buyResult.ctsScore
+                  ctsScore: buyResult.ctsScore,
                 },
 
-                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
+                tradeHistory: [
+                  ...(stock.tradeHistory || []),
+                  {
+                    id: Date.now().toString(),
+                    type: 'buy_more',
+                    time: new Date(),
+                    shares: sharesToBuy,
+                    price: buyResult.entryPrice,
+                  },
+                ],
               };
 
               hasChanges = true;
-
-              addToAutoLog(
-                `🟢 AUTO BUY MORE ${sharesToBuy} ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`
-              );
-            } else {
-              // 🔥 NO TRADE REASON TRACKING
-              //console.log(`No Buy More for ${stock.symbol}:`, buyResult?.noTradeReasons || "No strong signal");
-              currentStocks[i] = {
-                ...stock,
-                lastAiDecision: {
-                  action: 'Hold',
-                  reason:  buyResult?.noTradeReasons?.join(', ') + ' ' + buyResult?.thesis || "No strong signal",
-                  confidence: buyResult?.confidence || 50,
-                  timestamp: new Date(),
-                  ctsScore: buyResult?.ctsScore || null
-                }
-              };
             }
           }
         }
 
         // =========================
-        // 🔵 CASE 2: NOT IN POSITION
+        // 🔵 CASE 2: NO POSITION
         // =========================
-        else if (stock.status === 'idle' || stock.status === 'monitoring') {
+        else {
 
-          if (inCooldown) continue;
+          if (inCooldown || availableCash < currentPrice) continue;
 
-          if (availableCash >= currentPrice) {
-            console.log(`Evaluating potential new position for ${stock.symbol}...`);
-            const currentPrice = toNumber(quotes[stock.symbol]?.price);
-            //const autoStock = autoStocks.find((s: any) => s.symbol === symbol);
-            const buyResult = await evaluateStockForBuy(stock.symbol, autoStocks, currentPrice);
+          const buyResult = await evaluateStockForBuy(
+            stock.symbol,
+            autoStocks,
+            currentPrice
+          );
 
-            if (buyResult?.shouldBuy && buyResult.entryPrice) {
-              const capitalToUse = getSmartPositionSize(
-                buyResult.ctsScore,
-                availableCash,
-                0,
-                stock.allocation || 0
-              );
+          if (buyResult?.shouldBuy && buyResult.entryPrice) {
 
-              const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
-              if (sharesToBuy < 1) continue;
-              if (capitalToUse < buyResult.entryPrice * 0.8) continue; // ensure we're using enough capital to justify the trade, skip noisey trades
+            const capitalToUse = getSmartPositionSize(
+              buyResult.ctsScore,
+              availableCash,
+              0,
+              stock.allocation || 0
+            );
 
-              const newTradeEntry = {
-                id: Date.now().toString(),
-                type: 'buy',
-                time: new Date(),
+            const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
+            if (sharesToBuy < 1) continue;
+
+            currentStocks[i] = {
+              ...stock,
+              status: 'in-position',
+
+              currentPosition: {
+                entryPrice: buyResult.entryPrice,
                 shares: sharesToBuy,
-                price: buyResult.entryPrice,
-                amount: sharesToBuy * buyResult.entryPrice,
+                entryTime: new Date(),
+                peakPrice: buyResult.entryPrice,
+                peakPnLPercent: 0,
+              },
 
-                reason: buyResult.thesis || "AI buy signal",
-                confidence: buyResult.confidence || 70,
-                positionSizePercent: capitalToUse / (stock.allocation || 1),
+              lastAiDecision: {
+                action: 'Buy',
+                reason: buyResult.thesis,
+                confidence: buyResult.confidence,
+                timestamp: new Date(),
                 ctsScore: buyResult.ctsScore,
-                ctsBreakdown: buyResult.breakdown,
-                noTradeReasons: buyResult.noTradeReasons || []
-              };
+              },
 
-              currentStocks[i] = {
-                ...stock,
-                status: 'in-position',
-
-                currentPosition: {
-                  entryPrice: buyResult.entryPrice,
+              tradeHistory: [
+                ...(stock.tradeHistory || []),
+                {
+                  id: Date.now().toString(),
+                  type: 'buy',
+                  time: new Date(),
                   shares: sharesToBuy,
-                  entryTime: new Date(),
-                  thesis: buyResult.thesis,
-                  peakPrice: buyResult.entryPrice,
-                  peakPnLPercent: 0
+                  price: buyResult.entryPrice,
                 },
+              ],
+            };
 
-                lastAiDecision: {
-                  action: 'Buy',
-                  reason: buyResult.thesis,
-                  confidence: buyResult.confidence,
-                  timestamp: new Date(),
-                  ctsBreakdown: buyResult.breakdown
-                },
-
-                tradeHistory: [...(stock.tradeHistory || []), newTradeEntry]
-              };
-
-              hasChanges = true;
-
-              addToAutoLog(
-                `🟢 AUTO BUY ${sharesToBuy} ${stock.symbol} @ $${buyResult.entryPrice.toFixed(2)}`
-              );
-            }
-            else {
-              // 🔥 NO TRADE REASON TRACKING
-              //console.log(`No buy for ${stock.symbol}: ${buyResult?.noTradeReasons?.join(', ') || "No strong signal"}`);
-              currentStocks[i] = {
-                ...stock,
-                lastAiDecision: {
-                  action: 'Hold',
-                  reason:  buyResult?.noTradeReasons?.join(', ') + ' ' + buyResult?.thesis || "No strong signal",
-                  confidence: buyResult?.confidence || 50,
-                  timestamp: new Date(),
-                  ctsScore: buyResult?.ctsScore || null
-                }
-              };
-            }
+            hasChanges = true;
           }
         }
       }
 
       if (hasChanges) {
-        console.log('💾 Updating autoStocks after trade(s)');
+        setAutoStocks(currentStocks);
       }
-      setAutoStocks(currentStocks);
-    }, 600000); // 10 mins for testing
+    }, 600000);
 
     return () => clearInterval(interval);
   }, [isAutoMonitoring]);
-
+  
   // Manual Sell Now
   // Manual Sell for Auto Trading
   const manualSell = async (symbol: string) => {
@@ -2419,7 +2377,7 @@ useEffect(() => {
 
                                       <div className="flex flex-col items-center">
                                         <div className="text-gray-500">Allocated</div>
-                                        <div className="font-mono">
+                                        <div className={`font-mono ${stock.allocation >= 0 ? 'text-blue-400' : 'text-red-400'}`}>
                                           ${(stock.allocation || 0).toFixed(2)}
                                         </div>
                                       </div>
@@ -2433,7 +2391,7 @@ useEffect(() => {
 
                                       <div className="flex flex-col items-center">
                                         <div className="text-gray-500">$Available</div>
-                                        <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                        <div className={`font-mono ${Available$ > 0 ? 'text-orange-300' : 'text-amber-400'}`}>
                                           ${Available$.toFixed(0)}
                                         </div>
                                       </div>
@@ -2486,7 +2444,7 @@ useEffect(() => {
                                 <div className="mt-6 grid grid-cols-3 gap-4 text-sm">
                                   <div>
                                     <div className="text-gray-400 text-xs">Total Allocation</div>
-                                    <div className="font-mono font-medium">${(stock.allocation || 0).toLocaleString()}</div>
+                                    <div className={`font-mono font-medium ${stock.allocation >= 0 ? 'text-blue-400' : 'text-red-400'}`}>${(stock.allocation || 0).toLocaleString(2)}</div>
                                   </div>
                                   <div>
                                     <div className="text-gray-400 text-xs">Total Shares</div>
@@ -2508,7 +2466,7 @@ useEffect(() => {
                                   </div>
                                   <div>
                                     <div className="text-gray-400 text-xs">Available$</div>
-                                    <div className={`font-mono ${Available$ > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    <div className={`font-mono ${Available$ > 0 ? 'text-orange-300' : 'text-amber-400'}`}>
                                       ${Available$.toFixed(0)}
                                     </div>
                                   </div>
@@ -3891,8 +3849,9 @@ useEffect(() => {
                     const currentPrice = toNumber(quotes[symbol]?.price);
                     // 🔥 NEW: Immediate AI evaluation
                     setTimeout(async () => {
+                      const toastBuyMore = toast.loading(`AI evaluating ${symbol} with new capital...`);
                       const result = await evaluateStockForBuy(symbol, autoStocks, currentPrice);
-
+                      toast.dismiss(toastBuyMore);
                       setAutoStocks(prev =>
                         prev.map(stock =>
                           stock.symbol === symbol
@@ -3917,7 +3876,7 @@ useEffect(() => {
                       setAutoStocks(prev =>
                         prev.map(stock => {
                           if (stock.symbol !== symbol) return stock;
-
+                          const toastBuyMoreStocks = toast.loading(`AI confirmed Buy for ${symbol}. Executing trade...`);
                           const availableCash = stock.allocation || 0;
                           const sharesToBuy = Math.floor(availableCash / (result.entryPrice ?? 0));
                           const entryPrice = result.entryPrice || 0;                         
@@ -3950,9 +3909,11 @@ useEffect(() => {
                               }
                             ]
                           };
+                          toast.dismiss(toastBuyMoreStocks);   
                         })
                       );                      
-                      addToAutoLog(`⚡ INSTANT BUY ${symbol} after Buy More — AI confirmed`);                      
+                      addToAutoLog(`⚡ INSTANT BUY ${symbol} after Buy More — AI confirmed`); 
+                      toast.success(`AI confirmed Buy for ${symbol}. Executing trade...`);                                        
                     }
                     toast.success(`$${amount} added. AI evaluating ${symbol}...`);
                   }, 300); // slight delay to ensure state update                    
