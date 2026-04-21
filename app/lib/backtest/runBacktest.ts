@@ -2,6 +2,8 @@ import { calculateMACD } from "../ctsHelpers/calculateMACD";
 import { calculateEMA } from "../ctsHelpers/calculateEMA";
 import { calculateRSI } from "../ctsHelpers/calculateRSI";
 import { detectRectangleBreakout } from "../ctsHelpers/detectRectangleBreakout";
+import { calculateFinalCTS } from "@/app/lib/calculateScore/calculateFinalCTS";
+import { getNewsSentiment } from "../ctsHelpers/getNewsSentiment";
 
 type BacktestTrade = {
   entryPrice: number;
@@ -12,6 +14,8 @@ type BacktestTrade = {
   pnl?: number;
   pnlPercent?: number;
   ctsAtEntry: number;
+  dailyCTSAtEntry?: number;
+  intradayCTSAtEntry?: number;
 };
 
 type BacktestResult = {
@@ -21,96 +25,143 @@ type BacktestResult = {
   maxDrawdown: number;
   symbol: string;
 };
-import { calculateFinalCTS } from "@/app/lib/calculateScore/calculateFinalCTS";
-import { getNewsSentiment } from "../ctsHelpers/getNewsSentiment";
+
+const toDateSafe = (value: any) => {
+  return value instanceof Date ? value : new Date(value);
+};
+
 export const runBacktest = async (
   ohlc: any[],
   closes: number[],
   volumes: number[],
   symbol: string
 ): Promise<BacktestResult> => {
-
   let cash = 10000;
   let position: BacktestTrade | null = null;
   let trades: BacktestTrade[] = [];
 
   let peakEquity = cash;
   let maxDrawdown = 0;
-  var news = await getNewsSentiment(symbol) as any[] || [];
-  //console.log(`Fetched ${news.length} news items for backtest of ${symbol}`, news);
-  for (let i = 50; i < closes.length; i++) {
-    // Slice historical data up to this candle
+
+  const news = ((await getNewsSentiment(symbol)) as any[]) || [];
+
+  // Need enough bars for daily-style context + intraday signal quality
+  const startIndex = Math.max(60, 200);
+
+  for (let i = startIndex; i < closes.length; i++) {
+    // =========================
+    // Slice historical data up to this point only
+    // =========================
     const sliceCloses = closes.slice(0, i + 1);
     const sliceOhlc = ohlc.slice(0, i + 1);
     const sliceVolumes = volumes.slice(0, i + 1);
-    const { macd, signal, histogram } = calculateMACD(closes);
-    const rsi = calculateRSI(closes, 14);
-    const ema200 = closes.length >= 200 ? calculateEMA(closes, 200) : [];
 
-    const breakoutResult = detectRectangleBreakout(ohlc, volumes);
-    const result =  await calculateFinalCTS(
-      sliceOhlc,
-      sliceCloses,
-      macd,
-      rsi,
-      ema200,
-      sliceVolumes,
-      null,
-      news || [],
-      [],
-      symbol
-    );
+    // =========================
+    // Indicators based on sliced data
+    // =========================
+    const { macd, signal } = calculateMACD(sliceCloses);
+    const rsi = calculateRSI(sliceCloses, 14);
+    const ema20 = sliceCloses.length >= 20 ? calculateEMA(sliceCloses, 20) : [];
+    const ema50 = sliceCloses.length >= 50 ? calculateEMA(sliceCloses, 50) : [];
+    const ema200 = sliceCloses.length >= 200 ? calculateEMA(sliceCloses, 200) : [];
 
-    const ctsScore = result.finalScore;
-    const price = closes[i];
-    const time = ohlc[i].x;
+    const breakoutResult = detectRectangleBreakout(sliceOhlc, sliceVolumes);
 
-    // === POSITION SIZING (CTS-based)
+    // =========================
+    // Approximation inside single-series backtest:
+    // treat the same series as both daily + intraday if you only have one dataset
+    // You can later improve this by passing separate daily/intraday arrays.
+    // =========================
+    const result = calculateFinalCTS({
+      dailyCloses: sliceCloses,
+      dailyVolumes: sliceVolumes,
+      intradayCloses: sliceCloses,
+      intradayVolumes: sliceVolumes,
+      dailyRsi: rsi,
+      intradayRsi: rsi,
+      dailyMacd: macd,
+      dailySignal: signal,
+      intradayMacd: macd,
+      intradaySignal: signal,
+      dailyEma50: ema50,
+      dailyEma200: ema200,
+      intradayEma20: ema20,
+      intradayEma50: ema50,
+      spyDailyCloses: [],
+    });
+
+    const ctsScore = Number(result.finalScore || 50);
+    const dailyCTS = Number(result.dailyCTS || ctsScore);
+    const intradayCTS = Number(result.intradayCTS || ctsScore);
+
+    const price = Number(closes[i]);
+    const time = toDateSafe(ohlc[i]?.x);
+
+    // =========================
+    // Position sizing
+    // =========================
     const getAllocationPercent = (cts: number) => {
       if (cts >= 85) return 1.0;
       if (cts >= 75) return 0.75;
       if (cts >= 65) return 0.5;
+      if (cts >= 55) return 0.25;
       return 0;
     };
 
-    // === BUY LOGIC
+    // =========================
+    // BUY LOGIC
+    // =========================
     if (!position) {
       const allocationPercent = getAllocationPercent(ctsScore);
       const amountToInvest = cash * allocationPercent;
 
-      if (ctsScore >= 65 && amountToInvest > price) {
+      const strongEnoughToEnter =
+        ctsScore >= 65 &&
+        dailyCTS >= 60 &&
+        intradayCTS >= 60;
+
+      if (strongEnoughToEnter && amountToInvest > price) {
         const shares = Math.floor(amountToInvest / price);
 
-        position = {
-          entryPrice: price,
-          shares,
-          entryTime: time,
-          ctsAtEntry: ctsScore
-        };
+        if (shares > 0) {
+          position = {
+            entryPrice: price,
+            shares,
+            entryTime: time,
+            ctsAtEntry: ctsScore,
+            dailyCTSAtEntry: dailyCTS,
+            intradayCTSAtEntry: intradayCTS,
+          };
 
-        cash -= shares * price;
+          cash -= shares * price;
+        }
       }
     }
 
-    // === SELL LOGIC
-    else if (position) {
-      const pnlPercent = ((price - position.entryPrice) / position.entryPrice) * 100;
+    // =========================
+    // SELL LOGIC
+    // =========================
+    else {
+      const pnlPercent =
+        ((price - position.entryPrice) / position.entryPrice) * 100;
 
       const shouldSell =
-        ctsScore < 50 ||         // CTS breakdown
-        pnlPercent >= 15 ||      // take profit
-        pnlPercent <= -8;        // stop loss
+        ctsScore < 50 ||              // overall breakdown
+        dailyCTS < 50 ||              // higher timeframe weak
+        intradayCTS < 45 ||           // timing breaks hard
+        pnlPercent >= 15 ||           // take profit
+        pnlPercent <= -8;             // stop loss
 
       if (shouldSell) {
         const exitValue = position.shares * price;
-        const pnl = exitValue - (position.shares * position.entryPrice);
+        const pnl = exitValue - position.shares * position.entryPrice;
 
         const trade: BacktestTrade = {
           ...position,
           exitPrice: price,
           exitTime: time,
           pnl,
-          pnlPercent
+          pnlPercent,
         };
 
         trades.push(trade);
@@ -119,29 +170,65 @@ export const runBacktest = async (
       }
     }
 
-    // === EQUITY TRACKING
+    // =========================
+    // EQUITY TRACKING
+    // =========================
     const equity = position
-      ? cash + (position.shares * price)
+      ? cash + position.shares * price
       : cash;
 
     if (equity > peakEquity) peakEquity = equity;
 
-    const drawdown = (peakEquity - equity) / peakEquity;
+    const drawdown = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0;
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
   }
 
-  // === METRICS
+  // =========================
+  // FORCE CLOSE ANY OPEN POSITION AT FINAL BAR
+  // =========================
+  if (position && closes.length > 0) {
+    const finalPrice = Number(closes[closes.length - 1]);
+    const finalTime = toDateSafe(ohlc[ohlc.length - 1]?.x);
+
+    const exitValue = position.shares * finalPrice;
+    const pnl = exitValue - position.shares * position.entryPrice;
+    const pnlPercent =
+      ((finalPrice - position.entryPrice) / position.entryPrice) * 100;
+
+    trades.push({
+      ...position,
+      exitPrice: finalPrice,
+      exitTime: finalTime,
+      pnl,
+      pnlPercent,
+    });
+
+    cash += exitValue;
+    position = null;
+  }
+
+  // =========================
+  // FINAL METRICS
+  // =========================
   const totalReturn = ((cash - 10000) / 10000) * 100;
 
-  const wins = trades.filter(t => (t.pnl || 0) > 0).length;
+  const wins = trades.filter((t) => (t.pnl || 0) > 0).length;
   const winRate = trades.length ? (wins / trades.length) * 100 : 0;
-  console.log(`Backtest completed for ${symbol} - Total Return: ${totalReturn.toFixed(2)}%, Win Rate: ${winRate.toFixed(1)}%, Max Drawdown: ${(maxDrawdown * 100).toFixed(1)}%`);
+
+  console.log(
+    `Backtest completed for ${symbol} - Total Return: ${totalReturn.toFixed(
+      2
+    )}%, Win Rate: ${winRate.toFixed(1)}%, Max Drawdown: ${(
+      maxDrawdown * 100
+    ).toFixed(1)}%`
+  );
   console.log(`Trades:`, trades);
+
   return {
     trades,
     totalReturn,
     winRate,
     maxDrawdown,
-    symbol
+    symbol,
   };
 };

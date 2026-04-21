@@ -51,7 +51,7 @@ export async function POST() {
     const alpacaBaseUrl = brokerRow.is_paper
       ? 'https://paper-api.alpaca.markets'
       : 'https://api.alpaca.markets';
-
+    console.log('Testing broker connection with Alpaca API at', alpacaBaseUrl);
     const testRes = await fetch(`${alpacaBaseUrl}/v2/account`, {
       headers: {
         'APCA-API-KEY-ID': apiKey,
