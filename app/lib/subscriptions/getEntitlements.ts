@@ -12,7 +12,7 @@ export type Entitlements = {
 };
 
 export function subscriptionsEnforced() {
-  return process.env.SUBSCRIPTIONS_ENFORCED === 'true';
+  return process.env.NEXT_PUBLIC_SUBSCRIPTIONS_ENFORCED === 'true';
 }
 
 export async function getEntitlements(userId: string): Promise<Entitlements> {

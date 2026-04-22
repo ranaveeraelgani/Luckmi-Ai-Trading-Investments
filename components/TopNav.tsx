@@ -77,7 +77,7 @@ export default function TopNav({ activePage }: TopNavProps) {
           <a href="/stock" className={linkClass('stocks')}>Stocks</a>
             
           {isAdmin && (
-            <a href="/admin" className={`hover:text-amber-400 transition-colors ${activePage === 'admin' ? 'text-amber-400' : ''}`}>
+            <a href="/admin/users" className={`hover:text-amber-400 transition-colors ${activePage === 'admin' ? 'text-amber-400' : ''}`}>
               Admin
             </a>
           )}
@@ -101,7 +101,7 @@ export default function TopNav({ activePage }: TopNavProps) {
                 </a>
                 <button
                   className="w-full text-left px-4 py-3 text-sm hover:bg-[#252b3b] transition-colors"
-                  onClick={() => { setShowAccountDropdown(false); window.location.href = '/alpaca-broker'; }}
+                  onClick={() => { setShowAccountDropdown(false); window.location.href = '/alpaca'; }}
                 >
                   Alpaca
                 </button>
@@ -152,7 +152,7 @@ export default function TopNav({ activePage }: TopNavProps) {
                 </a>
 
                 {isAdmin && (
-                  <a href="/admin" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300 transition-colors">
+                  <a href="/admin/users" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300 transition-colors">
                     Admin
                   </a>
                 )}

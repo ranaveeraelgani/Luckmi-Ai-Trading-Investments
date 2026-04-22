@@ -39,6 +39,7 @@ import { supabase } from '../lib/supabaseClient';
 import { routeModule } from 'next/dist/build/templates/pages';
 import { getCtsForSymbol } from '../lib/evaluateAi/evaluateHelpers/getCtsForSymbol';
 import { getAiRecommendation } from '../lib/AiRecommendation/getAiRecommendation';
+import RunTradeCycleButton from "@/components/RunTradeCycleButton";
 // Register core Chart.js + candlestick (safe on server)
 ChartJS.register(
   CategoryScale,
@@ -1252,7 +1253,7 @@ useEffect(() => {
             </div>
 
             {isAdmin && (
-              <a href="/admin" className="hover:text-amber-400 transition-colors">
+              <a href="/admin/users" className="hover:text-amber-400 transition-colors">
                 Admin
               </a>
             )}
@@ -1758,26 +1759,12 @@ useEffect(() => {
                         >
                           {isAutoMonitoring ? '⏹️ Stop Monitoring' : '▶️ Start Monitoring'}
                         </button> */}
-
-                        <button
-                          onClick={async () => {
-                            try {
-                              setIsAiThinking(true);
-                              await fetch('/api/engine/run-cycle-user');
-                               await fetchAutoStocks();
-                               await fetchLastRun();
-                              addToAutoLog('Manual cycle triggered');
-                            } catch (err) {
-                              console.error('Manual cycle failed:', err);
-                              addToAutoLog('Manual cycle failed');
-                            } finally {
-                              setIsAiThinking(false);
-                            }
-                          }}
-                          className="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-2xl font-medium flex items-center gap-2 transition-colors"
-                        >
-                          🔄 Run Trade Cycle
-                        </button>
+                        <RunTradeCycleButton
+                          fetchAutoStocks={fetchAutoStocks}
+                          fetchLastRun={fetchLastRun}
+                          addToAutoLog={addToAutoLog}
+                          setIsAiThinking={setIsAiThinking}
+                        />
 
                         <button
                           onClick={() => setShowAddAutoModal(true)}
@@ -3541,7 +3528,7 @@ useEffect(() => {
                   )}
                 </div>
                 {isAdmin && (
-                  <a href="/admin" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
+                  <a href="/admin/users" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
                     Admin
                   </a>
                 )}
