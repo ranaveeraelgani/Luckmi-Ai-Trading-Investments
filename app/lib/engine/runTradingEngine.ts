@@ -107,15 +107,16 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 const isFullExit = remainingShares === 0;
 
                 const newTrade = {
-                    id: Date.now().toString(),
+                    id: crypto.randomUUID(),
+                    auto_stock_id: stock.id,
                     user_id: stock.user_id, // 🔥 REQUIRED FOR DB
                     symbol: stock.symbol,
-                    type: isFullExit ? 'sell' : 'partial_sell',
+                    type: isFullExit ? "sell" : "partial_sell",
                     shares: sharesToSell,
                     price: currentPrice,
+                    amount: sharesToSell * currentPrice,
                     pnl,
-                    created_at: new Date(),
-
+                    created_at: new Date().toISOString(),                  
                     sell_score: sellDecision.sellScore,
                     reason: sellDecision.reason,
                     confidence: sellDecision.confidence,
@@ -205,14 +206,15 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     const newAvg = (oldCost + newCost) / totalShares;
 
                     const newTrade = {
-                        id: Date.now().toString(),
+                       id: crypto.randomUUID(),
+                        auto_stock_id: stock.id,
                         user_id: stock.user_id,
                         symbol: stock.symbol,
-                        type: 'buy_more',
+                        type: 'buyMore',
                         shares: sharesToBuy,
                         price: buyResult.entryPrice,
-                        created_at: new Date(),
-
+                        created_at: new Date().toISOString(),
+                        amount: sharesToBuy * buyResult.entryPrice,
                         reason: buyResult.thesis,
                         confidence: buyResult.confidence,
                         cts_score: buyResult.ctsScore,
@@ -316,14 +318,15 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 if (sharesToBuy < 1) continue;
 
                 const newTrade = {
-                    id: Date.now().toString(),
+                    id: crypto.randomUUID(),
+                    auto_stock_id: stock.id,
                     user_id: stock.user_id,
                     symbol: stock.symbol,
                     type: 'buy',
                     shares: sharesToBuy,
                     price: buyResult.entryPrice,
-                    created_at: new Date(),
-
+                    created_at: new Date().toISOString(),
+                    amount: sharesToBuy * buyResult.entryPrice,
                     reason: buyResult.thesis,
                     confidence: buyResult.confidence,
                     cts_score: buyResult.ctsScore,

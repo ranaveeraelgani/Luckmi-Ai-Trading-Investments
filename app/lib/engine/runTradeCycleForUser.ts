@@ -6,6 +6,9 @@ import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { acquireEngineLock, releaseEngineLock } from "@/app/lib/engine/helpers/engine-locks";
 import { getManualCooldownSeconds, getRemainingManualCooldownSeconds} from "@/app/lib/engine/helpers/manual-cooldown";
+import { executeBrokerTradesForUser } from "@/app/lib/broker/executeBrokerTradesForUser";
+import { getBrokerExecutionMode } from "@/app/lib/broker/getBrokerExecutionMode";
+
 export type TradeCycleRunType = 'manual' | 'cron' | 'admin';
 
 export type RunTradeCycleForUserParams = {
@@ -24,6 +27,7 @@ export type RunTradeCycleForUserResult = {
   updated: boolean;
   processed: number;
   tradesExecuted: number;
+  brokerMode?: boolean;
 };
 
 function getBaseUrl() {
@@ -66,35 +70,103 @@ async function saveEngineResults({
 }) {
   for (const stock of updatedStocks) {
     await supabase
-      .from('auto_stocks')
+      .from("auto_stocks")
       .update({
         allocation: stock.allocation,
         status: stock.status,
-        current_position: stock.currentPosition,
-        last_ai_decision: stock.lastAiDecision,
-        last_sell_time: stock.lastSellTime,
-        last_evaluated_price: stock.lastEvaluatedPrice,
+        last_ai_decision: stock.lastAiDecision ?? null,
+        last_sell_time: stock.lastSellTime ?? null,
+        last_evaluated_price: stock.lastEvaluatedPrice ?? null,
+        repeat_counter: stock.repeat_counter ?? stock.repeatCounter ?? undefined,
       })
-      .eq('id', stock.id);
+      .eq("id", stock.id)
+      .eq("user_id", userId);
 
     if (stock.currentPosition) {
-      await upsertPosition(supabase, stock);
+      await supabase.from("positions").upsert(
+        {
+          user_id: userId,
+          auto_stock_id: stock.id,
+          entry_price: stock.currentPosition.entryPrice,
+          shares: stock.currentPosition.shares,
+          peak_price: stock.currentPosition.peakPrice ?? stock.currentPosition.entryPrice,
+          peak_pnl_percent: stock.currentPosition.peakPnLPercent ?? 0,
+          entry_time:
+            stock.currentPosition.entryTime instanceof Date
+              ? stock.currentPosition.entryTime.toISOString()
+              : stock.currentPosition.entryTime,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "auto_stock_id",
+        }
+      );
     } else {
-      await deletePosition(supabase, stock.id);
+      await supabase
+        .from("positions")
+        .delete()
+        .eq("user_id", userId)
+        .eq("auto_stock_id", stock.id);
     }
-    console.log('Stock updated:', stock.symbol, 'last ai decision:', stock.lastAiDecision?.reason);
-    if (stock.lastAiDecision && stock.lastAiDecision.action !== 'Hold') {
-      await insertAiDecision(supabase, stock, stock.lastAiDecision);
+
+    if (stock.lastAiDecision && stock.lastAiDecision.action !== "Hold") {
+      await supabase.from("ai_decisions").insert({
+        user_id: userId,
+        auto_stock_id: stock.id,
+        symbol: stock.symbol,
+        action: stock.lastAiDecision.action,
+        reason: stock.lastAiDecision.reason,
+        confidence: stock.lastAiDecision.confidence ?? null,
+        cts_score: stock.lastAiDecision.ctsScore ?? null,
+        cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
+      });
     }
   }
 
   if (trades.length > 0) {
-    await supabase.from('trades').insert(
-      trades.map((t: any) => ({
-        ...t,
+    await supabase.from("trades").insert(
+      trades.map((trade: any) => ({
+        ...trade,
         user_id: userId,
       }))
     );
+  }
+}
+
+export async function saveEngineStateOnly({
+  supabase,
+  userId,
+  updatedStocks,
+}: {
+  supabase: any;
+  userId: string;
+  updatedStocks: any[];
+}) {
+  for (const stock of updatedStocks) {
+    await supabase
+      .from("auto_stocks")
+      .update({
+        status: stock.status,
+        last_ai_decision: stock.lastAiDecision ?? null,
+        last_evaluated_price: stock.lastEvaluatedPrice ?? null,
+        repeat_counter: stock.repeat_counter ?? stock.repeatCounter ?? undefined,
+        last_sell_time: stock.lastSellTime ?? null,
+      })
+      .eq("id", stock.id)
+      .eq("user_id", userId);
+
+    if (stock.lastAiDecision) {
+      await supabase.from("ai_decisions").insert({
+        user_id: userId,
+        auto_stock_id: stock.id,
+        symbol: stock.symbol,
+        action: stock.lastAiDecision.action,
+        reason: stock.lastAiDecision.reason,
+        confidence: stock.lastAiDecision.confidence ?? null,
+        cts_score: stock.lastAiDecision.ctsScore ?? null,
+        cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
+      });
+    }
   }
 }
 
@@ -285,7 +357,41 @@ export async function runTradeCycleForUser({
       eligibleStocks,
       quotes
     );
+    const brokerMode = await getBrokerExecutionMode(userId);
 
+      if (!brokerMode.enabled) {
+          return {
+              success: false,
+              status: "blocked",
+              processed: 0,
+              tradesExecuted: 0,
+              message: brokerMode.reason || "Broker execution not enabled",
+              updated: hasChanges,
+              brokerMode: false,
+          };
+      }
+
+    if (brokerMode.enabled && trades.length > 0 && hasChanges) {
+       const  brokerExecution = await executeBrokerTradesForUser({
+            userId,
+            trades: trades,
+        });
+        console.log("Broker execution:", brokerExecution);
+        await saveEngineStateOnly({
+            supabase,
+            userId,
+            updatedStocks: updatedStocks,
+        });
+
+        return {
+            success: true,
+            status: "success",
+            updated: hasChanges,
+            processed: eligibleStocks.length,
+            tradesExecuted: trades.length,
+            brokerMode: true,
+        };
+    }
     if (hasChanges) {
       await saveEngineResults({
         supabase,

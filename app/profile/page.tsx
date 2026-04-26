@@ -2,7 +2,7 @@
 
 import TopNav from '@/components/TopNav';
 import { useEffect, useState } from 'react';
-
+import BrokerStatusCard from "@/components/broker/BrokerStatusCard";
 export default function ProfilePage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +109,7 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
-
+            <BrokerStatusCard />
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-[#11151c] border border-gray-700 rounded-3xl p-6">
             <div className="text-lg font-semibold mb-4">Engine Status</div>

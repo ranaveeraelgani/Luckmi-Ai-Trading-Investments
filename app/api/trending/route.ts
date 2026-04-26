@@ -13,7 +13,7 @@ export async function GET() {
 
   try {
     const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=${apiKey}`;
-    console.log('Fetching Polygon gainers from:', url.replace(apiKey, '***')); // hide key in logs
+    //console.log('Fetching Polygon gainers from:', url.replace(apiKey, '***')); // hide key in logs
 
     const res = await fetch(url, {
       next: { revalidate: 180 }, // 3 min cache
