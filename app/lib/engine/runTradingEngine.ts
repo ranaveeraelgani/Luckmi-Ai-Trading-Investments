@@ -24,28 +24,29 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
         // =========================
         // 🔒 PRICE MOVEMENT FILTER
         // =========================
+        const isFirstEval = !stock.lastEvaluatedPrice;
         const lastPrice = stock.lastEvaluatedPrice || currentPrice;
         const priceChangePercent = Math.abs(
             ((currentPrice - lastPrice) / lastPrice) * 100
         );
 
-        if (priceChangePercent < 0.3) continue;
+        if (!isFirstEval && stock.status !== 'in-position' && priceChangePercent < 0.3) continue;
 
         // =========================
         // 🔒 COOLDOWN + FLIP PROTECTION
         // =========================
-        const COOLDOWN_MS = 30 * 60 * 1000;
-        const FLIP_COOLDOWN = 30 * 60 * 1000;
+        const BUY_MORE_COOLDOWN_MS = 15 * 60 * 1000;
+        const FLIP_COOLDOWN_MS = 30 * 60 * 1000;
 
-        const lastSellTime = stock.lastSellTime || 0;
-        const inCooldown = now - lastSellTime < COOLDOWN_MS;
+        const lastSellTime = stock.lastSellTime ? new Date(stock.lastSellTime).getTime() : 0;
+        const inBuyMoreCooldown = now - lastSellTime < BUY_MORE_COOLDOWN_MS;
 
         const flipBlocked =
             stock.lastAiDecision?.action === 'Sell' &&
             stock.lastSellTime &&
-            now - new Date(stock.lastSellTime).getTime() < FLIP_COOLDOWN;
-
-        if (flipBlocked) continue;
+            now - new Date(stock.lastSellTime).getTime() < FLIP_COOLDOWN_MS;
+        console.log(`BuyMore Cooldown: ${inBuyMoreCooldown}, Flip Blocked: ${flipBlocked}`);
+        if (flipBlocked && stock.status !== 'in-position') continue;
 
         // =========================
         // 💰 POSITION DATA
@@ -76,7 +77,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
             // ⏱ MIN HOLD
             const MIN_HOLD = 20 * 60 * 1000;
             const inMinHold =
-                Date.now() - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
+                now - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
 
             // 🔴 SELL
             const sellDecision = await evaluateSellDecision(
@@ -131,9 +132,6 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                 // RINSE & REPEAT LOGIC                
                 const repeatCount = stock.repeat_counter;
-                if (isFullExit) {
-                    stock.repeat_counter = repeatCount + 1;
-                } 
                 const canRepeat =
                     stock.rinseRepeat &&
                     repeatCount < (stock.maxRepeats || 1);
@@ -157,11 +155,11 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                     lastSellTime: now,
                     lastEvaluatedPrice: currentPrice,
-                    repeat_counter: repeatCount,    
+                    repeat_counter: isFullExit ? repeatCount + 1 : repeatCount,
                     lastAiDecision: {
                         action: 'Sell',
                         price: currentPrice,
-                        pnlPercent: ((currentPrice - entryPrice) / entryPrice) * 100,
+                        pnlPercent,
                         reason: sellDecision.reason,
                         confidence: sellDecision.confidence,
                         timestamp: new Date(),
@@ -178,7 +176,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
             }
 
             // 🟢 BUY MORE
-            if (!inCooldown && availableCash >= currentPrice) {
+            if (!inBuyMoreCooldown && !inMinHold && availableCash >= currentPrice) {
 
                 const buyResult = await evaluateStockForBuy(
                     stock.symbol,
@@ -198,12 +196,8 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
                     if (sharesToBuy < 1) continue;
 
-                    const oldShares = shares;
-                    const oldCost = oldShares * entryPrice;
-                    const newCost = sharesToBuy * buyResult.entryPrice;
-
-                    const totalShares = oldShares + sharesToBuy;
-                    const newAvg = (oldCost + newCost) / totalShares;
+                    const totalShares = shares + sharesToBuy;
+                    const newAvg = (shares * entryPrice + sharesToBuy * buyResult.entryPrice) / totalShares;
 
                     const newTrade = {
                        id: crypto.randomUUID(),
@@ -277,7 +271,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
         // 🔵 CASE 2: NO POSITION
         // =========================
         else {
-            if (inCooldown || availableCash < currentPrice) continue;
+            if (availableCash < currentPrice) continue;
             const repeatCount = Number(stock.repeat_counter ?? 0);
             const maxRepeats = Number(stock.max_repeats ?? 0);
             const repeatLimitReached = stock.rinse_repeat && repeatCount >= maxRepeats;
@@ -304,9 +298,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 updatedStocks,
                 currentPrice
             );
-
             if (buyResult?.shouldBuy && buyResult.entryPrice) {
-
                 const capitalToUse = getSmartPositionSize(
                     buyResult.ctsScore,
                     availableCash,

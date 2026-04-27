@@ -47,7 +47,6 @@ type EngineRun = {
   id?: string;
   status?: string;
   trades_executed?: number;
-  trades_count?: number;
   error_message?: string | null;
   broker_mode?: string | null;
   created_at?: string;
@@ -476,7 +475,7 @@ export default function AutoTradingPage() {
                   <MiniMetric label="Tracked" value={autoStocks.length} />
                   <MiniMetric label="Open Positions" value={openPositions.length} valueClassName="text-emerald-300" />
                   <MiniMetric label="Last Run" value={lastRun?.status || "never"} />
-                  <MiniMetric label="Trades" value={lastRun?.trades_executed ?? lastRun?.trades_count ?? 0} />
+                  <MiniMetric label="Trades" value={lastRun?.trades_executed ?? 0} />
                 </div>
               </div>
             </Card>
@@ -522,7 +521,7 @@ export default function AutoTradingPage() {
                 {engineExpanded && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <MiniMetric label="Status" value={lastRun?.status || "—"} />
-                    <MiniMetric label="Trades" value={lastRun?.trades_executed ?? lastRun?.trades_count ?? 0} />
+                    <MiniMetric label="Trades" value={lastRun?.trades_executed ?? 0} />
                     <MiniMetric label="Mode" value={lastRun?.broker_mode || "paper"} />
                     <MiniMetric label="Error" value={lastRun?.error_message || "—"} />
                   </div>

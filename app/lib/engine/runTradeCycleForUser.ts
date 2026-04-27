@@ -357,9 +357,16 @@ export async function runTradeCycleForUser({
       eligibleStocks,
       quotes
     );
+
     const brokerMode = await getBrokerExecutionMode(userId);
 
       if (!brokerMode.enabled) {
+            await insertEngineRun({
+                userId,
+                runType,
+                status: "blocked",
+                blockedReason: brokerMode.reason || "Broker execution not enabled",
+            });
           return {
               success: false,
               status: "blocked",
