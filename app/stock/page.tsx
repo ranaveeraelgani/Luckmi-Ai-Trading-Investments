@@ -35,6 +35,11 @@ import { evaluateStockForBuy } from '../lib/evaluateAi/evaluateBuy/evaluateStock
 import { evaluateSellDecision } from '../lib/evaluateAi/evaluateSell/evaluateSellDecision';
 import { tr } from 'zod/v4/locales';
 import { time } from 'console';
+import { supabase } from '../lib/supabaseClient';
+import { routeModule } from 'next/dist/build/templates/pages';
+import { getCtsForSymbol } from '../lib/evaluateAi/evaluateHelpers/getCtsForSymbol';
+import { getAiRecommendation } from '../lib/AiRecommendation/getAiRecommendation';
+import RunTradeCycleButton from "@/components/RunTradeCycleButton";
 // Register core Chart.js + candlestick (safe on server)
 ChartJS.register(
   CategoryScale,
@@ -151,15 +156,20 @@ export default function ChatPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showWelcome, setShowWelcome] = useState(true);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false);
+  const [showMobileAccountDropdown, setShowMobileAccountDropdown] = useState(false);
   const [showReportsModal, setShowReportsModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
+  const accountDropdownRef = useRef<HTMLDivElement | null>(null);
   const autoStocksRef = useRef(autoStocks);
   const quotesRef = useRef(quotes);
   const [backtestResult, setBacktestResult] = useState<any>(null);
   const [showBacktestModal, setShowBacktestModal] = useState(false);
   const [openStocks, setOpenStocks] = useState<Record<string, boolean>>({});
-
+  const [lastRun, setLastRun] = useState<any>(null);
+  const [subscription, setSubscription] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   // toggle for trade history details in auto tab
   const toggleStock = (symbol: string) => {
     setOpenStocks(prev => ({
@@ -344,58 +354,58 @@ export default function ChatPage() {
     savePortfolio();
   }, [portfolio]);
 
-  // Load autoStocks from Supabase - Final safe version
-  useEffect(() => {
-    const loadAutoStocks = async () => {
-      const supabase = createClient();
+  // // Load autoStocks from Supabase - Final safe version
+  // useEffect(() => {
+  //   const loadAutoStocks = async () => {
+  //     const supabase = createClient();
 
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+  //     try {
+  //       const { data: { user } } = await supabase.auth.getUser();
+  //       if (!user) return;
 
-        const { data, error } = await supabase
-          .from('auto_trades')
-          .select('stocks')
-          .eq('user_id', user.id)
-          .maybeSingle();
+  //       const { data, error } = await supabase
+  //         .from('auto_trades')
+  //         .select('stocks')
+  //         .eq('user_id', user.id)
+  //         .maybeSingle();
 
-        if (error) {
-          console.error('Error loading autoStocks:', error);
-          setAutoStocks([]);
-          return;
-        }
+  //       if (error) {
+  //         console.error('Error loading autoStocks:', error);
+  //         setAutoStocks([]);
+  //         return;
+  //       }
 
-        if (data?.stocks && Array.isArray(data.stocks)) {
-          const restored = data.stocks.map((stock: any) => ({
-            ...stock,
-            currentPosition: stock.currentPosition ? {
-              ...stock.currentPosition,
-              entryTime: stock.currentPosition.entryTime
-                ? new Date(stock.currentPosition.entryTime)
-                : null
-            } : null,
-            tradeHistory: stock.tradeHistory
-              ? stock.tradeHistory.map((entry: any) => ({
-                ...entry,
-                time: entry.time ? new Date(entry.time) : null
-              }))
-              : []
-          }));
+  //       if (data?.stocks && Array.isArray(data.stocks)) {
+  //         const restored = data.stocks.map((stock: any) => ({
+  //           ...stock,
+  //           currentPosition: stock.currentPosition ? {
+  //             ...stock.currentPosition,
+  //             entryTime: stock.currentPosition.entryTime
+  //               ? new Date(stock.currentPosition.entryTime)
+  //               : null
+  //           } : null,
+  //           tradeHistory: stock.tradeHistory
+  //             ? stock.tradeHistory.map((entry: any) => ({
+  //               ...entry,
+  //               time: entry.time ? new Date(entry.time) : null
+  //             }))
+  //             : []
+  //         }));
 
-          setAutoStocks(restored);
-          //console.log(`✅ Loaded ${restored.length} auto stocks from Supabase`);
-        } else {
-          setAutoStocks([]);
-          console.log('No autoStocks data found in Supabase yet');
-        }
-      } catch (err) {
-        console.error('Failed to load autoStocks from Supabase', err);
-        setAutoStocks([]);
-      }
-    };
+  //         setAutoStocks(restored);
+  //         //console.log(`✅ Loaded ${restored.length} auto stocks from Supabase`);
+  //       } else {
+  //         setAutoStocks([]);
+  //         console.log('No autoStocks data found in Supabase yet');
+  //       }
+  //     } catch (err) {
+  //       console.error('Failed to load autoStocks from Supabase', err);
+  //       setAutoStocks([]);
+  //     }
+  //   };
 
-    loadAutoStocks();
-  }, []);
+  //   loadAutoStocks();
+  // }, []);
 
   // Save autoStocks to Supabase - Handles empty array correctly
   useEffect(() => {
@@ -456,6 +466,99 @@ export default function ChatPage() {
 
     fetchMarketNews();
   }, [selectedStock]); // Re-fetch when selection changes
+
+  // server side implemented for autostocks
+  const fetchAutoStocks = async () => {
+    const res = await fetch('/api/stocks'); 
+    const data = await res.json();
+    setAutoStocks(data);
+  };
+  // Fetch latest engine run info
+  const fetchLastRun = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('engine_runs')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!error && data) {
+      setLastRun(data);
+    }
+  };
+
+  useEffect(() => {
+    fetchAutoStocks();
+  }, []);
+
+  const fetchSubscription = async () => {
+    try {
+      const res = await fetch('/api/subscription/me');
+      const data = await res.json();
+      setSubscription(data);
+    } catch (err) {
+      console.error('Failed to fetch subscription', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSubscription();
+  }, []);
+
+  const autoStockCount = autoStocks.length;
+  const stockLimitReached =
+    subscription?.enforced && subscription?.maxAutoStocks !== undefined
+      ? autoStockCount >= subscription.maxAutoStocks
+      : false;
+  // trade engine last update
+  useEffect(() => {
+    fetchLastRun();
+  }, []);
+
+  // Check admin status
+  const fetchAdminStatus = async () => {
+    try {
+      const res = await fetch('/api/admin/me');
+
+      if (!res.ok) {
+        console.error('Failed to fetch admin status', res.status);
+        setIsAdmin(false);
+        return;
+      }
+      
+      const data = await res.json();
+      setIsAdmin(!!data?.isAdmin);
+    } catch (err) {
+      console.error('Admin status error', err);
+      setIsAdmin(false);
+    }
+  };
+  // Check admin status on mount
+  useEffect(() => {
+    fetchAdminStatus();
+  }, []);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (
+        showAccountDropdown &&
+        accountDropdownRef.current &&
+        !accountDropdownRef.current.contains(event.target as Node)
+      ) {
+        setShowAccountDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showAccountDropdown]);
 
   // Add this after AI recommendation is set
   useEffect(() => {
@@ -529,253 +632,52 @@ export default function ChatPage() {
       setChartLoading(true);
 
       try {
-        // 1. Fetch candles
-        let daysBack = 30;
-        if (timeRange === '1d') daysBack = 2;
-        if (timeRange === '1w') daysBack = 10;
-        if (timeRange === '1m') daysBack = 40;
-
-        const fromDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const toDate = new Date().toISOString().split('T')[0];
-
-        const multiplier = resolution === 'D' ? '1' : resolution;
-        const timespan = resolution === 'D' ? 'day' : 'minute';
-
-        const url = `/api/polygon-candles?symbol=${selectedStock}&multiplier=${multiplier}&timespan=${timespan}&from=${fromDate}&to=${toDate}`;
-
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const data = await res.json();
-        if (data.error || !data.t?.length) throw new Error(data.error || 'No data');
-
-        // Process data
-        const maxPoints = 500;
-        const startIndex = Math.max(0, data.t.length - maxPoints);
-
-        const slicedData = {
-          t: data.t.slice(startIndex),
-          o: data.o.slice(startIndex),
-          h: data.h.slice(startIndex),
-          l: data.l.slice(startIndex),
-          c: data.c.slice(startIndex),
-          v: data.v.slice(startIndex),
-        };
-
-        const ohlc = slicedData.t.map((_: any, i: number) => ({
-          x: new Date(slicedData.t[i] * 1000),
-          o: slicedData.o[i],
-          h: slicedData.h[i],
-          l: slicedData.l[i],
-          c: slicedData.c[i],
-        }));
-
-        const closes = ohlc.map((c: any) => c.c);
-
-        const { macd, signal, histogram } = calculateMACD(closes);
-        const rsi = calculateRSI(closes, 14);
-        const ema200 = closes.length >= 200 ? calculateEMA(closes, 200) : [];
-
-        const breakoutResult = detectRectangleBreakout(ohlc, slicedData.v);
-
-        // 2. Calculate CTS
-        const ctsResult =  await calculateFinalCTS(
-          ohlc,
-          closes,
-          macd,
-          rsi,
-          ema200,
-          slicedData.v,
-          breakoutResult,
-          newsData || [],
-          spyData || [],
-          selectedStock
-        );
+        // Calculate CTS
+        const ctsResult = await getCtsForSymbol(selectedStock);
         // After const ctsResult = calculateFinalCTS(...)
         const toastId = toast.loading(`AI evaluating ${selectedStock}...`);
-        setFinalCtsScore(ctsResult.finalScore);
-        setAiLastRSI(ctsResult.lastRSI ?? null);
-        setAiLastMACD(ctsResult.lastMACD ?? null);
-        setAiLastSignal(ctsResult.lastSignal ?? null);
-        setAiEma200Last(ctsResult.ema200Last ?? null);
-        setAiRecentCloses(ctsResult.recentCloses || []);
-        setAiLastClose(ctsResult.lastClose ?? null);
+        setFinalCtsScore(ctsResult.ctsScore);
+        setAiLastRSI(toNumber(ctsResult.rsi) ?? null);
+        setAiLastMACD(ctsResult .macd.toString() ?? null);
+        setAiLastSignal(ctsResult .signal.toString()   ?? null);
+        setAiEma200Last(ctsResult .ema200 ?? null);
+        setAiRecentCloses(Array.isArray(ctsResult.recentCloses) ? ctsResult.recentCloses : []);
+        setAiLastClose(Array.isArray(ctsResult.dailyCloses) ? ctsResult.dailyCloses.at(-1) ?? null : null);
         if (isCancelled) return;
         // 3. Update chart and CTS
-        setChartData({
-          datasets: [
-            // Price candlesticks (solid – from above)
-            {
-              label: `${selectedStock} Price`,
-              data: ohlc,
-              type: 'candlestick' as const,
 
-              // Solid fill – keep function
-              backgroundColor: (ctx: any) => {
-                return ctx.raw.c >= ctx.raw.o ? '#26a69a' : '#ef5350';
-              },
-
-              // Aggressively kill body border
-              borderColor: 'transparent',
-              borderWidth: 0,                       // Must be 0 here
-
-              // Wicks – try white or bright for contrast
-              wickColor: '#ffffff',                 // or '#e2e8f0' for softer
-              wickWidth: 1,                         // thinner = less bleed
-
-              fill: false,                  // already good
-
-              yAxisID: 'y',
-            },
-
-            // 200 EMA (if you still want it)
-            {
-              label: '200 EMA',
-              data: ema200.map((value: number, i: number) => ({
-                x: ohlc[i + 200]?.x ?? new Date(),
-                y: value,
-              })),
-              borderColor: '#ff9800',
-              borderWidth: 2.5,
-              borderDash: [4, 4],
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y',
-            },
-
-            // MACD line
-            {
-              label: 'MACD',
-              data: macd.map((value: number, i: number) => ({
-                x: ohlc[i + 26]?.x ?? new Date(),
-                y: value,
-              })),
-              borderColor: '#00bcd4', // cyan
-              borderWidth: 2,
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y2',
-            },
-
-            // Signal line
-            {
-              label: 'Signal',
-              data: signal.map((value: number, i: number) => ({
-                x: ohlc[i + 26 + 9]?.x ?? new Date(),
-                y: value,
-              })),
-              borderColor: '#ff9800', // orange
-              borderWidth: 2,
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y2',
-            },
-
-            // Histogram
-            {
-              label: 'Histogram',
-              data: histogram.map((value: number, i: number) => ({
-                x: ohlc[i + 26 + 9]?.x ?? new Date(),
-                y: value,
-              })),
-              type: 'bar' as const,
-              backgroundColor: histogram.map((v: number) => v >= 0 ? '#26a69a' : '#ef5350'), // solid green/red
-              yAxisID: 'y2',
-            },
-
-            // RSI line
-            {
-              label: 'RSI',
-              data: rsi.map((value: number, i: number) => ({
-                x: ohlc[i + 14]?.x ?? new Date(),
-                y: value,
-              })),
-              borderColor: '#ab47bc', // bright purple
-              borderWidth: 2,
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y3',
-            },
-
-            // RSI levels
-            {
-              label: 'Overbought (70)',
-              data: rsi.map((_, i: number) => ({
-                x: ohlc[i + 14]?.x ?? new Date(),
-                y: 70,
-              })),
-              borderColor: '#ef5350',
-              borderDash: [6, 3],
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y3',
-            },
-            {
-              label: 'Oversold (30)',
-              data: rsi.map((_, i: number) => ({
-                x: ohlc[i + 14]?.x ?? new Date(),
-                y: 30,
-              })),
-              borderColor: '#26a69a',
-              borderDash: [6, 3],
-              type: 'line' as const,
-              pointRadius: 0,
-              yAxisID: 'y3',
-            },
-            // Volume bars (below price)
-            {
-              label: 'Volume',
-              data: slicedData.v.map((vol: number, i: number) => ({
-                x: ohlc[i]?.x ?? new Date(),  // safe x
-                y: vol,
-              })),
-              type: 'bar' as const,
-
-              // Safe background color: fallback to gray if candle missing
-              backgroundColor: (ctx: any) => {
-                const index = ctx.dataIndex;
-                const candle = ohlc[index];
-                if (!candle || !candle.c || !candle.o) {
-                  return '#64748b80'; // fallback gray semi-transparent
-                }
-                return candle.c >= candle.o ? '#26a69a80' : '#ef535080';
-              },
-
-              borderColor: 'transparent',
-              barPercentage: 0.95,
-              categoryPercentage: 0.95,
-              yAxisID: 'yVolume',
-            },
-          ]
-        });
-        setRawBaseScore(ctsResult.rawBaseScore);
-        setTradeRecommendation(ctsResult.recommendation as 'Strong Buy' | 'Buy' | 'Hold' | 'Avoid' | 'Sell');
+        setRawBaseScore(ctsResult.intradayCTS);
+       
         setCtsBreakdowns(prev => ({
           ...prev,
-          [selectedStock]: ctsResult.ctsBreakdown || {}
+          [selectedStock]: ctsResult.breakdown || {}
         }));
         //console.log('CTS Breakdown:', ctsResult.ctsBreakdown, filtersApplied);
         //console.log(`CTS updated for ${selectedStock} (${timeRange} ${resolution}): ${ctsResult.finalScore}`);
 
         // 4. Trigger AI ONLY ONCE after everything is ready
 
-        setTimeout(() => {
-          const currentCts = ctsResult.finalScore;
+        setTimeout(async () => {
+          const currentCts = ctsResult.ctsScore;
           const currentStock = selectedStock;
 
           // Immediately use the fresh values
-          getAiRecommendation(
+          const aiRecommendation = await getAiRecommendation(
             currentStock,
             currentCts,                    // ← Always use the just-calculated value
             undefined,
-            ctsResult.lastRSI,
-            ctsResult.lastMACD,
-            ctsResult.lastSignal,
-            ctsResult.ema200Last,
+            toNumber(ctsResult.rsi),
+            ctsResult.macd.toString(),
+            ctsResult.signal.toString(),
+            ctsResult.ema200,
             ctsResult.recentCloses,
-            ctsResult.lastClose
+            Array.isArray(ctsResult.dailyCloses) ? ctsResult.dailyCloses.at(-1) : undefined,
+            ctsResult.dailyCTS, ctsResult.intradayCTS, ctsResult.alignment,
+            ctsResult.levels? ctsResult.levels : undefined,
           );
-
+          setAiRecommendation({
+            action: aiRecommendation?.action as 'Buy' | 'Hold' | 'Sell' | 'Strong Buy' | null, reason: aiRecommendation?.reason || '',             
+             confidence: aiRecommendation?.confidence || 50, aiScore: aiRecommendation?.aiScore || null});  
           fetchNews(selectedStock);
           toast.dismiss(toastId);
         }, 400);
@@ -795,174 +697,7 @@ export default function ChatPage() {
     };
   }, [selectedStock, timeRange, resolution]);
 
-  const getAiRecommendation = async (
-    stockOverride?: string,
-    ctsOverride?: number | null,
-    customInstruction?: string,
-    lastRSI?: number,
-    lastMACD?: string,
-    lastSignal?: string,
-    ema200Last?: string,
-    recentCloses?: number[],
-    lastClose?: number
-  ) => {
-    const stock = stockOverride || selectedStock;
-    const ctsScore = ctsOverride !== undefined && ctsOverride !== null
-      ? ctsOverride
-      : finalCtsScore;
 
-
-    if (!stock || ctsScore === null) return;
-
-    //console.log('Starting AI recommendation for', stock, 'with CTS:', ctsScore);
-
-    try {
-      // Safe fallbacks
-      const safeLastRSI = lastRSI?.toFixed(2) ?? 'N/A';
-      const safeLastMACD = lastMACD ?? 'N/A';
-      const safeLastSignal = lastSignal ?? 'N/A';
-      const safeEma200Last = ema200Last ?? 'N/A';
-      const safeRecentCloses = recentCloses
-        ? recentCloses.map(c => c.toFixed(2)).join(', ')
-        : 'N/A';
-
-
-const prompt = `
-You are a disciplined trading analyst assisting a systematic trading engine.
-
-The system uses a Confluence Trading Score (CTS) as the PRIMARY driver for trade decisions and position sizing.
-Your role is to VALIDATE, highlight risks, and provide forward-looking insight — not override the system.
-
-CTS Zones (STRICT anchor):
-- 78–100: Strong Buy (high conviction trend)
-- 65–77: Buy (favorable setup)
-- 53–64: Hold (neutral)
-- 40–52: Avoid (weak structure)
-- Below 40: Sell (bearish)
-
-CORE RULES:
-1. Always begin by stating the CTS score and its zone for ${stock}.
-2. CTS is the primary signal — assume the system will act on it.
-3. Do NOT override CTS unless there is a strong, clear risk.
-4. Your role is to:
-   - Confirm the setup OR
-   - Flag risks OR
-   - Highlight weakening/improving conditions
-5. Think FORWARD:
-   - Is momentum strengthening or fading?
-   - Is trend likely to continue or weaken?
-
-AI SCORE RULES:
-- Generate a NEW score (do not copy CTS).
-- Normally stay within ±10 of CTS.
-- You MAY deviate beyond ±10 ONLY if there is a strong, clearly identifiable reason such as:
-  - Trend structure breaking or reversing
-  - Strong momentum divergence
-  - Overextended (exhaustion) move
-  - Early breakout with strong confirmation
-- Any deviation beyond ±10 MUST be clearly justified in reasoning.
-
-ANALYSIS PRIORITY:
-1. Trend (price vs 200 EMA)
-2. Momentum (MACD direction + RSI behavior)
-3. Price structure (recent closes)
-4. Risk signals (weak momentum, divergence, chop, extended move)
-
-RISK FLAGS (IMPORTANT):
-If present, explicitly mention:
-- Weak trend
-- Overbought / oversold
-- Momentum divergence
-- Choppy price action
-- Fading strength
-
-CONFIDENCE GUIDELINES:
-- 80–100: Strong trend + aligned signals
-- 60–79: Mostly aligned, minor risks
-- 40–59: Mixed signals
-- Below 40: Weak or conflicting
-
-Current data:
-Stock: ${stock}
-CTS Score: ${ctsScore}/100 (Raw: ${rawBaseScore || 'N/A'})
-200 EMA: ${safeEma200Last}
-RSI: ${safeLastRSI}
-MACD: ${safeLastMACD} (Signal: ${safeLastSignal})
-Trend: ${Number(lastClose) > Number(safeEma200Last) ? 'Above EMA (Bullish)' : 'Below EMA (Bearish)'}
-Recent closes: ${safeRecentCloses}
-
-${customInstruction ? `User instruction: ${customInstruction}` : ''}
-
-OUTPUT FORMAT (strict):
-ACTION: Buy / Hold / Sell  
-REASON: 3 sentences max. First sentence MUST state CTS score and zone for ${stock}. Then validate trend and highlight any risks or forward-looking concerns.  
-AI Score: [number within ±10 but different]  
-CONFIDENCE: [0-100]  
-RISK FLAGS: [comma-separated short phrases OR "None"]
-`;
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
-      });
-
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-
-      let text = '';
-      try {
-        const data = await res.json();
-        text = data.content || data.message || data.text || JSON.stringify(data);
-      } catch {
-        text = await res.text();
-      }
-
-      const textClean = text.trim().replace(/\s+/g, ' ');
-
-      // Parse ACTION
-      const actionMatch = textClean.match(/ACTION:\s*(Buy|Hold|Sell|Strong Buy)/i);
-
-      // Parse REASON (3-4 sentences)
-      const reasonMatch = textClean.match(/REASON:\s*(.+?)(?=AI Score:|CONFIDENCE:|$)/is);
-
-      // Parse AI Score - Improved regex
-      const aiScoreMatch = textClean.match(/AI Score:\s*(\d+)/i);
-
-      // Parse CONFIDENCE
-      const confMatch = textClean.match(/CONFIDENCE:\s*(\d+)/i);
-
-      if (actionMatch) {
-        const action = actionMatch[1] as 'Buy' | 'Hold' | 'Sell' | 'Strong Buy';
-        const reason = reasonMatch ? reasonMatch[1].trim() : 'No reasoning provided';
-        const aiScore = aiScoreMatch ? parseInt(aiScoreMatch[1]) : null;
-        const confidence = confMatch ? Number(confMatch[1]) : 50;
-
-        //console.log('Parsed AI rec:', { action, reason, aiScore, confidence });
-
-        setAiRecommendation({
-          action,
-          reason,
-          aiScore,           // ← Now we store the AI Score
-          confidence
-        });
-      } else {
-        console.log('No valid ACTION in AI response');
-        setAiRecommendation({
-          action: 'Hold',
-          reason: 'Could not parse AI recommendation',
-          aiScore: null,
-          confidence: 30
-        });
-      }
-    } catch (err) {
-      console.error('AI recommendation failed:', err);
-      setAiRecommendation({
-        action: 'Hold',
-        reason: 'Error connecting to AI service',
-        aiScore: null,
-        confidence: 30
-      });
-    }
-  };
 
   const handleWatchlistSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1196,314 +931,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     addToAutoLog(`💰 BUY MORE ${symbol} — +$${additionalAmount}`);
   };  
 
-  // Final Auto Trading Monitoring Loop with Compounding
-  useEffect(() => {
-    if (!isAutoMonitoring || autoStocks.length === 0) return;
 
-    const interval = setInterval(async () => {
-      let hasChanges = false;
-      const currentStocks = [...autoStocksRef.current];
-
-      for (let i = 0; i < currentStocks.length; i++) {
-        const stock = currentStocks[i];
-
-        const currentPrice = safeNumber(quotes[stock.symbol]?.price || 0);
-        if (currentPrice <= 0) continue;
-
-        const now = Date.now();
-
-        // =========================
-        // 🔒 PRICE MOVEMENT FILTER
-        // =========================
-        const lastPrice = stock.lastEvaluatedPrice || currentPrice;
-        const priceChangePercent = Math.abs(
-          ((currentPrice - lastPrice) / lastPrice) * 100
-        );
-
-        if (priceChangePercent < 0.3) continue;
-
-        // =========================
-        // 🔒 COOLDOWN + FLIP PROTECTION
-        // =========================
-        const COOLDOWN_MS = 30 * 60 * 1000;
-        const FLIP_COOLDOWN = 30 * 60 * 1000;
-
-        const lastSellTime = stock.lastSellTime || 0;
-        const inCooldown = now - lastSellTime < COOLDOWN_MS;
-
-        const flipBlocked =
-          stock.lastAiDecision?.action === 'Sell' &&
-          stock.lastSellTime &&
-          now - new Date(stock.lastSellTime).getTime() < FLIP_COOLDOWN;
-
-        if (flipBlocked) continue;
-
-        // =========================
-        // 💰 POSITION DATA
-        // =========================
-        const investedSoFar =
-          (stock.currentPosition?.shares || 0) *
-          (stock.currentPosition?.entryPrice || 0);
-
-        const availableCash = (stock.allocation || 0) - investedSoFar;
-
-        // =========================
-        // 🟢 CASE 1: IN POSITION
-        // =========================
-        if (stock.status === 'in-position' && stock.currentPosition) {
-
-          const entryPrice = stock.currentPosition.entryPrice;
-          const shares = stock.currentPosition.shares;
-
-          const pnlPercent =
-            ((currentPrice - entryPrice) / entryPrice) * 100;
-
-          // 🔥 UPDATE PEAK
-          const prevPeak = stock.currentPosition.peakPrice || currentPrice;
-          const prevPeakPnL = stock.currentPosition.peakPnLPercent || 0;
-
-          const newPeakPrice = Math.max(prevPeak, currentPrice);
-          const newPeakPnL = Math.max(prevPeakPnL, pnlPercent);
-
-          // =========================
-          // ⏱ MIN HOLD PROTECTION
-          // =========================
-          const MIN_HOLD = 20 * 60 * 1000;
-          const inMinHold =
-            Date.now() - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
-
-          // =========================
-          // 🔴 SELL EVALUATION
-          // =========================
-          const sellDecision = await evaluateSellDecision(
-            stock.symbol,
-            stock.currentPosition,
-            currentPrice
-          );
-
-          let shouldSell = sellDecision?.shouldSell;
-
-          // 🔥 enforce min hold (except hard stop)
-          if (inMinHold && pnlPercent > -6) {
-            shouldSell = false;
-          }
-
-          if (shouldSell) {
-            const sellPercent = getSellSizePercent(sellDecision.sellScore || 80);
-
-            let sharesToSell = Math.floor(shares * sellPercent);
-
-            if (shares <= 5 || sharesToSell < 1) {
-              sharesToSell = shares;
-            }
-
-            if (sharesToSell <= 0) continue;
-
-            const sellPrice = currentPrice;
-
-            const pnl = (sellPrice - entryPrice) * sharesToSell;
-            const remainingShares = Math.max(0, shares - sharesToSell);
-            const isFullExit = remainingShares === 0;
-
-            const newTrade = {
-              id: Date.now().toString(),
-              type: isFullExit ? 'sell' : 'partial_sell',
-              time: new Date(),
-              shares: sharesToSell,
-              price: sellPrice,
-              amount: sellPrice * sharesToSell,
-              pnl,
-              sellDecisionScore: sellDecision.sellScore,
-              reason: sellDecision.reason,
-              confidence: sellDecision.confidence,
-              ctsScore: sellDecision.ctsScore,
-              ctsBreakdown: sellDecision.ctsBreakdown,
-            };
-
-            const newAllocation = stock.compoundProfits
-              ? (stock.allocation || 0) + pnl
-              : stock.allocation;
-
-            currentStocks[i] = {
-              ...stock,
-              allocation: Math.max(newAllocation, 0),
-
-              status: isFullExit
-                ? (stock.rinseRepeat ? 'monitoring' : 'completed')
-                : 'in-position',
-
-              currentPosition: isFullExit
-                ? null
-                : {
-                  ...stock.currentPosition,
-                  shares: remainingShares,
-                  peakPrice: newPeakPrice,
-                  peakPnLPercent: newPeakPnL,
-                },
-
-              lastSellTime: now,
-              lastEvaluatedPrice: currentPrice,
-
-              lastAiDecision: {
-                action: 'Sell',
-                reason: sellDecision.reason,
-                confidence: sellDecision.confidence,
-                timestamp: new Date(),
-                ctsScore: sellDecision.ctsScore,
-              },
-
-              tradeHistory: [...(stock.tradeHistory || []), newTrade],
-            };
-
-            hasChanges = true;
-            continue; // 🔥 NEVER BUY AFTER SELL
-          }
-
-          // =========================
-          // 🟡 HOLD UPDATE
-          // =========================
-          currentStocks[i] = {
-            ...stock,
-            currentPosition: {
-              ...stock.currentPosition,
-              peakPrice: newPeakPrice,
-              peakPnLPercent: newPeakPnL,
-            },
-            lastEvaluatedPrice: currentPrice,
-          };
-
-          // =========================
-          // 🟢 BUY MORE
-          // =========================
-          if (!inCooldown && availableCash >= currentPrice) {
-
-            const buyResult = await evaluateStockForBuy(
-              stock.symbol,
-              autoStocks,
-              currentPrice
-            );
-
-            if (buyResult?.shouldBuy && buyResult.entryPrice) {
-
-              const capitalToUse = getSmartPositionSize(
-                buyResult.ctsScore,
-                availableCash,
-                investedSoFar,
-                stock.allocation || 0
-              );
-
-              const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
-              if (sharesToBuy < 1) continue;
-
-              const oldShares = shares;
-              const oldCost = oldShares * entryPrice;
-              const newCost = sharesToBuy * buyResult.entryPrice;
-
-              const totalShares = oldShares + sharesToBuy;
-              const newAvg = (oldCost + newCost) / totalShares;
-
-              currentStocks[i] = {
-                ...stock,
-                currentPosition: {
-                  ...stock.currentPosition,
-                  shares: totalShares,
-                  entryPrice: parseFloat(newAvg.toFixed(4)),
-                },
-
-                lastAiDecision: {
-                  action: 'Buy More',
-                  reason: buyResult.thesis,
-                  confidence: buyResult.confidence,
-                  timestamp: new Date(),
-                  ctsScore: buyResult.ctsScore,
-                },
-
-                tradeHistory: [
-                  ...(stock.tradeHistory || []),
-                  {
-                    id: Date.now().toString(),
-                    type: 'buy_more',
-                    time: new Date(),
-                    shares: sharesToBuy,
-                    price: buyResult.entryPrice,
-                  },
-                ],
-              };
-
-              hasChanges = true;
-            }
-          }
-        }
-
-        // =========================
-        // 🔵 CASE 2: NO POSITION
-        // =========================
-        else {
-
-          if (inCooldown || availableCash < currentPrice) continue;
-
-          const buyResult = await evaluateStockForBuy(
-            stock.symbol,
-            autoStocks,
-            currentPrice
-          );
-
-          if (buyResult?.shouldBuy && buyResult.entryPrice) {
-
-            const capitalToUse = getSmartPositionSize(
-              buyResult.ctsScore,
-              availableCash,
-              0,
-              stock.allocation || 0
-            );
-
-            const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
-            if (sharesToBuy < 1) continue;
-
-            currentStocks[i] = {
-              ...stock,
-              status: 'in-position',
-
-              currentPosition: {
-                entryPrice: buyResult.entryPrice,
-                shares: sharesToBuy,
-                entryTime: new Date(),
-                peakPrice: buyResult.entryPrice,
-                peakPnLPercent: 0,
-              },
-
-              lastAiDecision: {
-                action: 'Buy',
-                reason: buyResult.thesis,
-                confidence: buyResult.confidence,
-                timestamp: new Date(),
-                ctsScore: buyResult.ctsScore,
-              },
-
-              tradeHistory: [
-                ...(stock.tradeHistory || []),
-                {
-                  id: Date.now().toString(),
-                  type: 'buy',
-                  time: new Date(),
-                  shares: sharesToBuy,
-                  price: buyResult.entryPrice,
-                },
-              ],
-            };
-
-            hasChanges = true;
-          }
-        }
-      }
-
-      if (hasChanges) {
-        setAutoStocks(currentStocks);
-      }
-    }, 600000);
-
-    return () => clearInterval(interval);
-  }, [isAutoMonitoring]);
   
   // Manual Sell Now
   // Manual Sell for Auto Trading
@@ -1788,8 +1216,53 @@ useEffect(() => {
             <a href="#" onClick={() => alert("You are already on Auto Trading")} className="hover:text-blue-400 transition-colors">Auto Trading</a>
             <a href="#" onClick={() => setShowOptionsModal(true)} className="hover:text-blue-400 transition-colors">Options</a>
             <a href="#" onClick={() => setShowReportsModal(true)} className="hover:text-blue-400 transition-colors">Reports</a>
-            <a href="#" onClick={() => setShowAccountModal(true)} className="hover:text-blue-400 transition-colors">Account</a>
-            <a href="#" onClick={() => setShowGuideModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">
+            <div className="relative" ref={accountDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setShowAccountDropdown((prev) => !prev)}
+                className="hover:text-blue-400 transition-colors flex items-center gap-1"
+              >
+                Account
+                <span className="text-xs">▼</span>
+              </button>
+
+              {showAccountDropdown && (
+                <div className="absolute top-full right-0 mt-2 w-40 bg-[#11151c] border border-gray-700 rounded-xl shadow-xl overflow-hidden z-[70]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountDropdown(false);
+                      window.location.href = '/profile';
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#1a1f2e] transition-colors"
+                  >
+                    Profile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountDropdown(false);
+                      window.location.href = '/alpaca';
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#1a1f2e] transition-colors"
+                  >
+                    Alpaca
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isAdmin && (
+              <a href="/admin/users" className="hover:text-amber-400 transition-colors">
+                Admin
+              </a>
+            )}
+
+            <a
+              href="#"
+              onClick={() => setShowGuideModal(true)}
+              className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl"
+            >
               Testing Guide
             </a>
           </div>
@@ -1811,7 +1284,39 @@ useEffect(() => {
         {/* <div className="lg:hidden border-b border-gray-800 bg-[#11151c] px-4 py-3 flex items-center justify-between shrink-0">
           <h1 className="font-semibold text-lg">AI Trading Assistant</h1>
         </div> */}
+        {/* <div className="px-4 py-3 shrink-0">
+          {subscription && (
+            <div className="bg-[#11151c] border border-gray-700 rounded-2xl p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-gray-400">Current Plan</div>
+                  <div className="text-lg font-semibold text-white">
+                    {subscription.planCode}
+                  </div>
+                </div>
 
+                <div className="text-right">
+                  <div className="text-sm text-gray-400">Auto Stocks Limit</div>
+                  <div className="text-lg font-mono text-white">
+                    {subscription.maxAutoStocks}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 text-xs text-gray-400">
+                Manual Cycle: {subscription.allowManualCycle ? 'On' : 'Off'} •
+                Cron Automation: {subscription.allowCronAutomation ? 'On' : 'Off'} •
+                Broker Connect: {subscription.allowBrokerConnect ? 'On' : 'Off'}
+              </div>
+
+              {!subscription.enforced && (
+                <div className="mt-2 text-xs text-amber-400">
+                  Test mode active: subscription limits are visible but not enforced.
+                </div>
+              )}
+            </div>
+          )}
+        </div> */}
         {/* Top Tabs */}
         <div className="bg-[#11151c] border-b border-gray-800 px-4 py-3 flex gap-8 shrink-0">
           <button
@@ -2174,16 +1679,32 @@ useEffect(() => {
                           AI-powered simulated trading • Max 3 stocks • AI has final veto
                         </p>
                       </div>
-
-                      {/* Last Updated Timestamp */}
-                      {lastUpdated && (
-                        <div className="text-xs text-gray-500 text-right mb-4">
-                          Last updated: {lastUpdated.toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </div>
-                      )}
+                      
+                      {/* Last Run Information */}
+                      <div className="text-xs text-gray-400 mt-2">
+                        {lastRun ? (
+                          <>
+                            Last run: {new Date(lastRun.created_at).toLocaleTimeString()} •{' '}
+                            <span
+                              className={
+                                lastRun.status === 'success'
+                                  ? 'text-emerald-400'
+                                  : lastRun.status === 'failed'
+                                    ? 'text-red-400'
+                                    : 'text-amber-400'
+                              }
+                            >
+                              {lastRun.status.toUpperCase()}
+                            </span>
+                            {' • '}
+                            {lastRun.stocks_processed} stocks
+                            {' • '}
+                            {lastRun.trades_executed} trades
+                          </>
+                        ) : (
+                          'No runs yet'
+                        )}
+                      </div>
 
                       {/* Auto Trading Portfolio Summary */}
                       <div className="bg-[#11151c] border border-gray-700 rounded-3xl p-6 mb-8">
@@ -2229,7 +1750,7 @@ useEffect(() => {
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <button
+                        {/* <button
                           onClick={() => setIsAutoMonitoring(!isAutoMonitoring)}
                           className={`px-6 py-3 rounded-2xl font-medium transition-all flex items-center gap-2 ${isAutoMonitoring
                             ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
@@ -2237,15 +1758,21 @@ useEffect(() => {
                             }`}
                         >
                           {isAutoMonitoring ? '⏹️ Stop Monitoring' : '▶️ Start Monitoring'}
-                        </button>
+                        </button> */}
+                        <RunTradeCycleButton
+                          fetchAutoStocks={fetchAutoStocks}
+                          fetchLastRun={fetchLastRun}
+                          addToAutoLog={addToAutoLog}
+                          setIsAiThinking={setIsAiThinking}
+                        />
 
                         <button
                           onClick={() => setShowAddAutoModal(true)}
-                          disabled={autoStocks.length >= 3}
+                          disabled={stockLimitReached}
                           className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 rounded-2xl font-medium flex items-center gap-2 transition-colors"
                         >
-                          + Add Stock
-                        </button>
+                          + Add Stock                          
+                        </button>                       
                       </div>
                     </div>
 
@@ -3717,26 +3244,28 @@ useEffect(() => {
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!newAutoSymbol.trim()) {
                       alert("Please enter a stock symbol");
                       return;
                     }
-
+                    const { data: { user } } = await supabase.auth.getUser();
                     const newStock = {
-                      id: Date.now().toString(),
                       symbol: newAutoSymbol.trim().toUpperCase(),
                       allocation: Number(newAllocation),
-                      compoundProfits: compoundProfits,        // ← New field
-                      rinseRepeat: rinseRepeat,
-                      maxRepeats: Number(maxRepeats),
-                      customGuidance: customGuidance.trim(),
+                      compound_profits: compoundProfits,        // ← New field
+                      rinse_repeat: rinseRepeat,
+                      max_repeats: Number(maxRepeats),
+                      custom_guidance: customGuidance.trim(),
                       status: 'idle' as const,
-                      currentPosition: null,
-                      tradeHistory: []
+                      user_id: user?.id, 
                     };
 
-                    setAutoStocks(prev => [...prev, newStock]);
+                    await fetch('/api/stocks/add', {
+                      method: 'POST',
+                      body: JSON.stringify(newStock),
+                    });
+                    await fetchAutoStocks();
                     setShowAddAutoModal(false);
 
                     // Reset form
@@ -3929,7 +3458,13 @@ useEffect(() => {
 
         {/* Mobile Menu */}
         {isMobileMenuOpen && (
-          <div className="fixed inset-0 bg-black/80 z-[90] lg:hidden" onClick={() => setIsMobileMenuOpen(false)}>
+          <div
+            className="fixed inset-0 bg-black/80 z-[90] lg:hidden"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              setShowMobileAccountDropdown(false);
+            }}
+          >
             <div
               className="bg-[#11151c] w-72 h-full p-6 overflow-y-auto"
               onClick={e => e.stopPropagation()}
@@ -3940,7 +3475,10 @@ useEffect(() => {
                   <p className="text-xs text-gray-500">Trading & Investments</p>
                 </div>
                 <button
-                  onClick={() => setIsMobileMenuOpen(false)}
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    setShowMobileAccountDropdown(false);
+                  }}
                   className="text-3xl text-gray-400 hover:text-white"
                 >
                   ✕
@@ -3952,7 +3490,48 @@ useEffect(() => {
                 <a href="#" onClick={() => alert("Auto Trading is the current page")} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">Auto Trading</a>
                 <a href="#" onClick={() => setShowOptionsModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">Options</a>
                 <a href="#" onClick={() => setShowReportsModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">Reports</a>
-                <a href="#" onClick={() => setShowAccountModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">Account</a>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMobileAccountDropdown((prev) => !prev)}
+                    className="w-full text-left py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl flex items-center justify-between"
+                  >
+                    <span>Account</span>
+                    <span className="text-xs">{showMobileAccountDropdown ? '▲' : '▼'}</span>
+                  </button>
+
+                  {showMobileAccountDropdown && (
+                    <div className="ml-4 mt-1 space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          setShowMobileAccountDropdown(false);
+                          window.location.href = '/profile';
+                        }}
+                        className="w-full text-left py-3 px-5 text-base hover:bg-[#1a1f2e] rounded-2xl"
+                      >
+                        Profile
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          setShowMobileAccountDropdown(false);
+                          window.location.href = '/alpaca';
+                        }}
+                        className="w-full text-left py-3 px-5 text-base hover:bg-[#1a1f2e] rounded-2xl"
+                      >
+                        Alpaca
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {isAdmin && (
+                  <a href="/admin/users" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
+                    Admin
+                  </a>
+                )}
                 <a href="#" onClick={() => setShowGuideModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">
                   Testing Guide
                 </a>

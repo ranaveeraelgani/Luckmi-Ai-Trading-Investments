@@ -6,118 +6,238 @@ import { calculateFinalCTS } from '@/app/lib/calculateScore/calculateFinalCTS';
 import { getNewsSentiment } from '../../ctsHelpers/getNewsSentiment';
 
 const toNumber = (value: string | number | undefined): number => {
-    if (value === undefined || value === null) return 0;
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    return isNaN(num) ? 0 : num;
+  if (value === undefined || value === null) return 0;
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  return isNaN(num) ? 0 : num;
 };
-// Ultra-safe getCtsForSymbol - Eliminates 'toFixed on never' error
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const getCtsForSymbol = async (symbol: string) => {
-    try {
-    let daysBack = 40;
-    // if (timeRange === '1d') daysBack = 2;
-    // if (timeRange === '1w') daysBack = 10;
-    // if (timeRange === '1m') daysBack = 40;
+  try {
+    const now = new Date();
 
-    const fromDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const toDate = new Date().toISOString().split('T')[0];
+    const intradayFrom = formatLocalDate(
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    );
+    const dailyFrom = formatLocalDate(
+      new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    );
+    const toDate = formatLocalDate(now);
 
-    const multiplier = 5; // resolution === 'D' ? '1' : resolution;
-    const timespan = 'minute'; // resolution === 'D' ? 'day' : 'minute';
-       
-        const res = await fetch(
-            `/api/polygon-candles?symbol=${symbol}&multiplier=${multiplier}&timespan=${timespan}&from=${fromDate}&to=${toDate}`
-        );
+    // =========================
+    // 1. FETCH INTRADAY 15m
+    // =========================
+    const intradayRes = await fetch(
+      `/api/polygon-candles?symbol=${symbol}&multiplier=15&timespan=minute&from=${intradayFrom}&to=${toDate}`
+    );
 
-        if (!res.ok) throw new Error(`Candle fetch failed: ${res.status}`);
-
-        const data = await res.json();
-
-        if (!data.c || data.c.length < 20) {
-            console.log(`Not enough data for ${symbol} (${data.c?.length || 0} bars)`);
-            return {
-                ctsScore: 55,
-                rsi: 'N/A',
-                macd: 'N/A',
-                signal: 'N/A',
-                ema200: 'N/A',
-                recentCloses: 'N/A'
-            };
-        }
-
-        const maxPoints = 500;
-        const startIndex = Math.max(0, data.t.length - maxPoints);
-        const slicedData = {
-            t: data.t.slice(startIndex),
-            o: data.o.slice(startIndex),
-            h: data.h.slice(startIndex),
-            l: data.l.slice(startIndex),
-            c: data.c.slice(startIndex),
-            v: data.v.slice(startIndex),
-        };
-        const closes = data.c;
-        const ohlc = data.t.map((t: number, i: number) => ({
-            x: new Date(t * 1000),
-            o: data.o[i],
-            h: data.h[i],
-            l: data.l[i],
-            c: data.c[i],
-        }));
-
-        const { macd, signal, histogram } = calculateMACD(closes);
-        const rsi = calculateRSI(closes, 14);
-        const ema200 = closes.length >= 200 ? calculateEMA(closes, 200) : [];
-        const breakoutResult = detectRectangleBreakout(ohlc, slicedData.v);
-        var news = await getNewsSentiment(symbol) as any[] || [];
-        // check rsi, macd, ema200, breakout, news sentiment and closes on console
-        //console.log(`getctsForSymbol indicators for ${symbol} - RSI: ${rsi.slice(-1)[0]}, MACD: ${macd.slice(-1)[0]}, Signal: ${signal.slice(-1)[0]}, EMA200: ${ema200.slice(-1)[0]}, Breakout: ${breakoutResult ? breakoutResult.type : 'none'}, News Sentiment: ${news.length} items, Recent Closes: ${closes.slice(-5).map((c: number) => c.toFixed(2)).join(', ')}`);
-        // 2. Calculate CTS
-        const result = await calculateFinalCTS(
-            ohlc,
-            closes,
-            macd,
-            rsi,
-            ema200,
-            slicedData.v,
-            breakoutResult,
-            news || [],
-            [],
-            symbol
-        );
-
-        const ctsScore = typeof result?.finalScore === 'number' ? result.finalScore : 55;
-        const breakdown = result?.ctsBreakdown || null;
-        // Ultra-safe extraction
-        // Ultra-safe extraction with type assertion
-        const lastRSI = result?.lastRSI !== undefined && result.lastRSI !== null ? toNumber(result.lastRSI) : 'N/A';
-        const lastMACD = result?.lastMACD !== undefined && result.lastMACD !== null ? toNumber(result.lastMACD) : 'N/A';
-        const lastSignal = result?.lastSignal !== undefined && result.lastSignal !== null ? toNumber(result.lastSignal) : 'N/A';
-        const ema200Last = result.ema200Last ? toNumber(result.ema200Last).toFixed(2) : 'N/A';
-
-        const recentClosesStr = closes.slice(-10).map((c: number) => Number(c).toFixed(2)).join(', ');
-        //console.log('ema200Last', ema200Last, 'lastsignal', lastSignal, 'lastMACD', lastMACD, 'lastRSI', lastRSI, 'ctsScore', ctsScore, 'recentClosesStr', recentClosesStr  );
-        return {
-            ctsScore,
-            rsi: lastRSI,
-            macd: lastMACD,
-            signal: lastSignal,
-            ema200: ema200Last,
-            recentCloses: recentClosesStr,
-            breakdown,
-            macdArr: macd,
-            signalArr: signal,
-            closes,
-            volumes: slicedData.v
-        };
-
-    } catch (err) {
-        console.error(`Failed to calculate indicators for ${symbol}`, err);
-        return {
-            ctsScore: 55,
-            rsi: 'N/A',
-            macd: 'N/A',
-            signal: 'N/A',
-            ema200: 'N/A',
-            recentCloses: 'N/A'
-        };
+    if (!intradayRes.ok) {
+      throw new Error(`Intraday candle fetch failed: ${intradayRes.status}`);
     }
+
+    const intradayData = await intradayRes.json();
+
+    if (!intradayData.c || intradayData.c.length < 30) {
+      return {
+        ctsScore: 55,
+        dailyCTS: 55,
+        intradayCTS: 55,
+        alignment: 'mixed',
+        rsi: 'N/A',
+        macd: 'N/A',
+        signal: 'N/A',
+        ema200: 'N/A',
+        recentCloses: [],
+        levels: null,
+        breakdown: null,
+      };
+    }
+
+    const intradayMaxPoints = 500;
+    const intradayStartIndex = Math.max(0, intradayData.t.length - intradayMaxPoints);
+
+    const intradaySliced = {
+      t: intradayData.t.slice(intradayStartIndex),
+      o: intradayData.o.slice(intradayStartIndex),
+      h: intradayData.h.slice(intradayStartIndex),
+      l: intradayData.l.slice(intradayStartIndex),
+      c: intradayData.c.slice(intradayStartIndex),
+      v: intradayData.v.slice(intradayStartIndex),
+    };
+
+    const intradayCloses = intradaySliced.c;
+    const intradayVolumes = intradaySliced.v || [];
+
+    // =========================
+    // 2. FETCH DAILY
+    // =========================
+    const dailyRes = await fetch(
+      `/api/polygon-candles?symbol=${symbol}&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
+    );
+
+    if (!dailyRes.ok) {
+      throw new Error(`Daily candle fetch failed: ${dailyRes.status}`);
+    }
+
+    const dailyData = await dailyRes.json();
+
+    if (!dailyData.c || dailyData.c.length < 40) {
+      return {
+        ctsScore: 55,
+        dailyCTS: 55,
+        intradayCTS: 55,
+        alignment: 'mixed',
+        rsi: 'N/A',
+        macd: 'N/A',
+        signal: 'N/A',
+        ema200: 'N/A',
+        recentCloses: [],
+        levels: null,
+        breakdown: null,
+      };
+    }
+
+    const dailyCloses = dailyData.c;
+    const dailyVolumes = dailyData.v || [];
+
+    // =========================
+    // 3. OPTIONAL SPY DAILY
+    // =========================
+    let spyDailyCloses: number[] = [];
+    try {
+      const spyRes = await fetch(
+        `/api/polygon-candles?symbol=SPY&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
+      );
+      if (spyRes.ok) {
+        const spyData = await spyRes.json();
+        spyDailyCloses = spyData?.c || [];
+      }
+    } catch {
+      spyDailyCloses = [];
+    }
+
+    // =========================
+    // 4. INDICATORS - INTRADAY
+    // =========================
+    const {
+      macd: intradayMacd,
+      signal: intradaySignal,
+    } = calculateMACD(intradayCloses);
+
+    const intradayRsi = calculateRSI(intradayCloses, 14);
+    const intradayEma20 =
+      intradayCloses.length >= 20 ? calculateEMA(intradayCloses, 20) : [];
+    const intradayEma50 =
+      intradayCloses.length >= 50 ? calculateEMA(intradayCloses, 50) : [];
+
+    // =========================
+    // 5. INDICATORS - DAILY
+    // =========================
+    const {
+      macd: dailyMacd,
+      signal: dailySignal,
+    } = calculateMACD(dailyCloses);
+
+    const dailyRsi = calculateRSI(dailyCloses, 14);
+    const dailyEma50 =
+      dailyCloses.length >= 50 ? calculateEMA(dailyCloses, 50) : [];
+    const dailyEma200 =
+      dailyCloses.length >= 200 ? calculateEMA(dailyCloses, 200) : [];
+
+    // =========================
+    // 6. COMBINED CTS
+    // =========================
+    const result = calculateFinalCTS({
+      dailyCloses,
+      dailyVolumes,
+      intradayCloses,
+      intradayVolumes,
+      dailyRsi,
+      intradayRsi,
+      dailyMacd,
+      dailySignal,
+      intradayMacd,
+      intradaySignal,
+      dailyEma50,
+      dailyEma200,
+      intradayEma20,
+      intradayEma50,
+      spyDailyCloses,
+    });
+
+    const ctsScore =
+      typeof result?.finalScore === 'number' ? result.finalScore : 55;
+
+    const lastRSI =
+      result?.lastRSI !== undefined && result.lastRSI !== null
+        ? toNumber(result.lastRSI)
+        : 'N/A';
+
+    const lastMACD =
+      result?.lastMACD !== undefined && result.lastMACD !== null
+        ? toNumber(result.lastMACD)
+        : 'N/A';
+
+    const lastSignal =
+      result?.lastSignal !== undefined && result.lastSignal !== null
+        ? toNumber(result.lastSignal)
+        : 'N/A';
+
+    const ema200Last =
+      result?.ema200Last !== undefined && result.ema200Last !== null
+        ? toNumber(result.ema200Last).toFixed(2)
+        : 'N/A';
+
+    const recentCloses = intradayCloses
+      .slice(-10)
+      .map((close: number) => Number(close))
+      .filter((close: number) => Number.isFinite(close));
+
+    return {
+      ctsScore,
+      dailyCTS: result.dailyCTS,
+      intradayCTS: result.intradayCTS,
+      alignment: result.alignment,
+
+      rsi: lastRSI,
+      macd: lastMACD,
+      signal: lastSignal,
+      ema200: ema200Last,
+      recentCloses,
+
+      levels: result.levels,
+      breakdown: result.ctsBreakdown,
+
+      intradayCloses,
+      dailyCloses,
+      intradayVolumes,
+      dailyVolumes,
+
+      intradayMacdArr: intradayMacd,
+      intradaySignalArr: intradaySignal,
+      dailyMacdArr: dailyMacd,
+      dailySignalArr: dailySignal,
+    };
+  } catch (err) {
+    console.error(`Failed to calculate indicators for ${symbol}`, err);
+    return {
+      ctsScore: 55,
+      dailyCTS: 55,
+      intradayCTS: 55,
+      alignment: 'mixed',
+      rsi: 'N/A',
+      macd: 'N/A',
+      signal: 'N/A',
+      ema200: 'N/A',
+      recentCloses: [],
+      levels: null,
+      breakdown: null,
+    };
+  }
 };

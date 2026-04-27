@@ -2,6 +2,7 @@ import { evaluateStockForBuy } from '@/app/lib/evaluateAi/evaluateBuy/evaluateSt
 import { evaluateSellDecision } from '@/app/lib/evaluateAi/evaluateSell/evaluateSellDecision';
 import { getSmartPositionSize } from '@/app/lib/evaluateAi/evaluateHelpers/getSmartPositionSize';
 import { getSellSizePercent } from '@/app/lib/evaluateAi/evaluateHelpers/getSellSizePercent';
+import { getQuotes } from '@/app/lib/quotes/quotes';
 // Safe number parsing with fallback
 const safeNumber = (val: any, fallback = 0) => {
     const num = Number(val);
@@ -9,15 +10,14 @@ const safeNumber = (val: any, fallback = 0) => {
 };
 export async function runTradingEngine(stocks: any[], quotes: any) {
     const updatedStocks = [...stocks];
+    let trades: any[] = [];
+    let hasChanges = false;
 
     for (let i = 0; i < updatedStocks.length; i++) {
         const stock = updatedStocks[i];
 
-        // 👇 paste your loop logic here
-        // REMOVE setState
-        // RETURN updatedStocks at end
-        const currentPrice = safeNumber(quotes[stock.symbol]?.price || 0);
-        if (currentPrice <= 0) continue;
+        const currentPrice = safeNumber(quotes[stock.symbol]?.price);
+        if (!currentPrice) continue;
 
         const now = Date.now();
 
@@ -67,32 +67,26 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
             const pnlPercent =
                 ((currentPrice - entryPrice) / entryPrice) * 100;
 
-            // 🔥 UPDATE PEAK
             const prevPeak = stock.currentPosition.peakPrice || currentPrice;
             const prevPeakPnL = stock.currentPosition.peakPnLPercent || 0;
 
             const newPeakPrice = Math.max(prevPeak, currentPrice);
             const newPeakPnL = Math.max(prevPeakPnL, pnlPercent);
 
-            // =========================
-            // ⏱ MIN HOLD PROTECTION
-            // =========================
+            // ⏱ MIN HOLD
             const MIN_HOLD = 20 * 60 * 1000;
             const inMinHold =
                 Date.now() - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
 
-            // =========================
-            // 🔴 SELL EVALUATION
-            // =========================
+            // 🔴 SELL
             const sellDecision = await evaluateSellDecision(
                 stock.symbol,
                 stock.currentPosition,
                 currentPrice
             );
-
+            let didAction = false;
             let shouldSell = sellDecision?.shouldSell;
 
-            // 🔥 enforce min hold (except hard stop)
             if (inMinHold && pnlPercent > -6) {
                 shouldSell = false;
             }
@@ -108,37 +102,48 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                 if (sharesToSell <= 0) continue;
 
-                const sellPrice = currentPrice;
-
-                const pnl = (sellPrice - entryPrice) * sharesToSell;
+                const pnl = (currentPrice - entryPrice) * sharesToSell;
                 const remainingShares = Math.max(0, shares - sharesToSell);
                 const isFullExit = remainingShares === 0;
 
                 const newTrade = {
-                    id: Date.now().toString(),
-                    type: isFullExit ? 'sell' : 'partial_sell',
-                    time: new Date(),
+                    id: crypto.randomUUID(),
+                    auto_stock_id: stock.id,
+                    user_id: stock.user_id, // 🔥 REQUIRED FOR DB
+                    symbol: stock.symbol,
+                    type: isFullExit ? "sell" : "partial_sell",
                     shares: sharesToSell,
-                    price: sellPrice,
-                    amount: sellPrice * sharesToSell,
+                    price: currentPrice,
+                    amount: sharesToSell * currentPrice,
                     pnl,
-                    sellDecisionScore: sellDecision.sellScore,
+                    created_at: new Date().toISOString(),                  
+                    sell_score: sellDecision.sellScore,
                     reason: sellDecision.reason,
                     confidence: sellDecision.confidence,
-                    ctsScore: sellDecision.ctsScore,
-                    ctsBreakdown: sellDecision.ctsBreakdown,
+                    cts_score: sellDecision.ctsScore,
                 };
+
+                trades.push(newTrade);
 
                 const newAllocation = stock.compoundProfits
                     ? (stock.allocation || 0) + pnl
                     : stock.allocation;
+
+                // RINSE & REPEAT LOGIC                
+                const repeatCount = stock.repeat_counter;
+                if (isFullExit) {
+                    stock.repeat_counter = repeatCount + 1;
+                } 
+                const canRepeat =
+                    stock.rinseRepeat &&
+                    repeatCount < (stock.maxRepeats || 1);
 
                 updatedStocks[i] = {
                     ...stock,
                     allocation: Math.max(newAllocation, 0),
 
                     status: isFullExit
-                        ? (stock.rinseRepeat ? 'monitoring' : 'completed')
+                        ? (canRepeat ? 'monitoring' : 'completed')
                         : 'in-position',
 
                     currentPosition: isFullExit
@@ -152,38 +157,27 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                     lastSellTime: now,
                     lastEvaluatedPrice: currentPrice,
-
+                    repeat_counter: repeatCount,    
                     lastAiDecision: {
                         action: 'Sell',
+                        price: currentPrice,
+                        pnlPercent: ((currentPrice - entryPrice) / entryPrice) * 100,
                         reason: sellDecision.reason,
                         confidence: sellDecision.confidence,
                         timestamp: new Date(),
                         ctsScore: sellDecision.ctsScore,
+                        ctsBreakdown: sellDecision.ctsBreakdown,
                     },
 
                     tradeHistory: [...(stock.tradeHistory || []), newTrade],
                 };
 
-                //hasChanges = true;
-                continue; // 🔥 NEVER BUY AFTER SELL
+                hasChanges = true;
+                didAction = true;
+                continue; // important to skip to avoid multiple actions in one cycle
             }
 
-            // =========================
-            // 🟡 HOLD UPDATE
-            // =========================
-            updatedStocks[i] = {
-                ...stock,
-                currentPosition: {
-                    ...stock.currentPosition,
-                    peakPrice: newPeakPrice,
-                    peakPnLPercent: newPeakPnL,
-                },
-                lastEvaluatedPrice: currentPrice,
-            };
-
-            // =========================
             // 🟢 BUY MORE
-            // =========================
             if (!inCooldown && availableCash >= currentPrice) {
 
                 const buyResult = await evaluateStockForBuy(
@@ -211,6 +205,23 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     const totalShares = oldShares + sharesToBuy;
                     const newAvg = (oldCost + newCost) / totalShares;
 
+                    const newTrade = {
+                       id: crypto.randomUUID(),
+                        auto_stock_id: stock.id,
+                        user_id: stock.user_id,
+                        symbol: stock.symbol,
+                        type: 'buyMore',
+                        shares: sharesToBuy,
+                        price: buyResult.entryPrice,
+                        created_at: new Date().toISOString(),
+                        amount: sharesToBuy * buyResult.entryPrice,
+                        reason: buyResult.thesis,
+                        confidence: buyResult.confidence,
+                        cts_score: buyResult.ctsScore,
+                    };
+
+                    trades.push(newTrade);
+
                     updatedStocks[i] = {
                         ...stock,
                         currentPosition: {
@@ -221,26 +232,44 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                         lastAiDecision: {
                             action: 'Buy More',
+                            price: buyResult.entryPrice,
                             reason: buyResult.thesis,
                             confidence: buyResult.confidence,
                             timestamp: new Date(),
                             ctsScore: buyResult.ctsScore,
+                            ctsBreakdown: buyResult.breakdown || null,
                         },
 
-                        tradeHistory: [
-                            ...(stock.tradeHistory || []),
-                            {
-                                id: Date.now().toString(),
-                                type: 'buy_more',
-                                time: new Date(),
-                                shares: sharesToBuy,
-                                price: buyResult.entryPrice,
-                            },
-                        ],
+                        tradeHistory: [...(stock.tradeHistory || []), newTrade],
                     };
 
-                    //hasChanges = true;
+                    hasChanges = true;
+                    didAction = true;
                 }
+            }
+            // =========================
+            // ⚪ STEP 3: HOLD (FINAL FALLBACK)
+            // =========================
+            if (!didAction) {
+                updatedStocks[i] = {
+                    ...stock,
+                    currentPosition: {
+                        ...stock.currentPosition,
+                        peakPrice: newPeakPrice,
+                        peakPnLPercent: newPeakPnL,
+                    },
+                    lastEvaluatedPrice: currentPrice,
+
+                    lastAiDecision: {
+                        action: 'Hold',
+                        price: currentPrice,
+                        reason: sellDecision?.reason || "No strong signal",
+                        confidence: sellDecision?.confidence || 50,
+                        timestamp: new Date(),
+                        ctsScore: sellDecision?.ctsScore || null,
+                        ctsBreakdown: sellDecision?.ctsBreakdown || null
+                    }
+                };
             }
         }
 
@@ -248,9 +277,28 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
         // 🔵 CASE 2: NO POSITION
         // =========================
         else {
-
             if (inCooldown || availableCash < currentPrice) continue;
-
+            const repeatCount = Number(stock.repeat_counter ?? 0);
+            const maxRepeats = Number(stock.max_repeats ?? 0);
+            const repeatLimitReached = stock.rinse_repeat && repeatCount >= maxRepeats;
+            if ((stock.status === 'idle' || stock.status === 'monitoring') && repeatLimitReached) {
+                updatedStocks[i] = {
+                    ...stock,
+                    status: 'completed',
+                    lastAiDecision: {
+                        action: 'Hold',
+                        price: currentPrice,
+                        reason: `Max repeats reached (${repeatCount}/${maxRepeats})`,
+                        confidence: 100,
+                        timestamp: new Date(),
+                        ctsScore: null,
+                        ctsBreakdown: null,
+                    },
+                    lastEvaluatedPrice: currentPrice,
+                };
+                hasChanges = true;
+                continue;
+            }
             const buyResult = await evaluateStockForBuy(
                 stock.symbol,
                 updatedStocks,
@@ -269,6 +317,23 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 const sharesToBuy = Math.floor(capitalToUse / buyResult.entryPrice);
                 if (sharesToBuy < 1) continue;
 
+                const newTrade = {
+                    id: crypto.randomUUID(),
+                    auto_stock_id: stock.id,
+                    user_id: stock.user_id,
+                    symbol: stock.symbol,
+                    type: 'buy',
+                    shares: sharesToBuy,
+                    price: buyResult.entryPrice,
+                    created_at: new Date().toISOString(),
+                    amount: sharesToBuy * buyResult.entryPrice,
+                    reason: buyResult.thesis,
+                    confidence: buyResult.confidence,
+                    cts_score: buyResult.ctsScore,
+                };
+
+                trades.push(newTrade);
+
                 updatedStocks[i] = {
                     ...stock,
                     status: 'in-position',
@@ -283,28 +348,21 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
 
                     lastAiDecision: {
                         action: 'Buy',
+                        price: buyResult.entryPrice,
                         reason: buyResult.thesis,
                         confidence: buyResult.confidence,
                         timestamp: new Date(),
                         ctsScore: buyResult.ctsScore,
+                        ctsBreakdown: buyResult.breakdown || null,
                     },
 
-                    tradeHistory: [
-                        ...(stock.tradeHistory || []),
-                        {
-                            id: Date.now().toString(),
-                            type: 'buy',
-                            time: new Date(),
-                            shares: sharesToBuy,
-                            price: buyResult.entryPrice,
-                        },
-                    ],
+                    tradeHistory: [...(stock.tradeHistory || []), newTrade],
                 };
 
-                //hasChanges = true;
+                hasChanges = true;
             }
         }
     }
 
-    return updatedStocks;
+    return { updatedStocks, trades, hasChanges };
 }
