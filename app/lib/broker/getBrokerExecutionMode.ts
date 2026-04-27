@@ -1,28 +1,33 @@
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 
 export async function getBrokerExecutionMode(userId: string) {
-  const brokerExecutionEnabled =
-    process.env.BROKER_EXECUTION_ENABLED === "true";
-
-  if (!brokerExecutionEnabled) {
+  if (process.env.BROKER_EXECUTION_ENABLED !== "true") {
     return {
       enabled: false,
-      mode: null,
-      reason: "Broker execution is currently disabled.",
+      mode: null as null,
+      reason: "Broker execution is disabled by platform settings.",
     };
   }
 
-  const { data: brokerKey } = await supabaseAdmin
+  const { data: brokerKey, error } = await supabaseAdmin
     .from("broker_keys")
     .select("connection_status, is_paper, live_trading_enabled")
     .eq("user_id", userId)
     .eq("broker", "alpaca")
     .maybeSingle();
 
+  if (error) {
+    return {
+      enabled: false,
+      mode: null as null,
+      reason: error.message,
+    };
+  }
+
   if (!brokerKey || brokerKey.connection_status !== "connected") {
     return {
       enabled: false,
-      mode: null,
+      mode: null as null,
       reason: "Connect Alpaca paper trading before running the engine.",
     };
   }
@@ -38,8 +43,16 @@ export async function getBrokerExecutionMode(userId: string) {
   if (!brokerKey.live_trading_enabled) {
     return {
       enabled: false,
-      mode: null,
+      mode: null as null,
       reason: "Live trading is connected but not enabled.",
+    };
+  }
+
+  if (process.env.LIVE_TRADING_ENABLED !== "true") {
+    return {
+      enabled: false,
+      mode: null as null,
+      reason: "Live trading is disabled by platform settings.",
     };
   }
 

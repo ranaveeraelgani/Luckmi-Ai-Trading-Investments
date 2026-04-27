@@ -5,6 +5,7 @@ import Link from "next/link";
 import TopNav from "@/components/TopNav";
 import LuckmiScoreModal from "@/components/shared/LuckmiScoreModal";
 import  LuckmiAiIcon  from "@/components/brand/LuckmiAiIcon";
+import CronRunsCard from "@/components/admin/CronRunsCard";
 type TrendingStock = {
   symbol: string;
   price?: number | string | null;
@@ -199,8 +200,8 @@ export default function DashboardPage() {
                 </div>
               </div>
             </section>
-          </div>
-
+          </div>                
+            <CronRunsCard />
           <LuckmiScoreModal
             isOpen={showCtsModal}
             onClose={() => setShowCtsModal(false)}

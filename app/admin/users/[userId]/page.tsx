@@ -4,6 +4,7 @@ import TopNav from "@/components/TopNav";
 import { createClient } from "@/app/lib/supabaseServer";
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 import { AdminRunCycleButton } from "./run-cycle-button";
+import CronRunsCard from "@/components/admin/CronRunsCard";
 
 type PageProps = {
   params: Promise<{ userId: string }>;
@@ -875,6 +876,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               )}
             </div>
           </Section>
+          <CronRunsCard />
         </div>
       </div>
     </div>

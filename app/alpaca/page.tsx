@@ -2,6 +2,7 @@
 
 import TopNav from "@/components/TopNav";
 import { useState, useEffect } from "react";
+import BrokerModeToggle from "@/components/broker/BrokerModeToggle";
 
 export default function AlpacaBrokerPage() {
     const [brokerForm, setBrokerForm] = useState({
@@ -194,6 +195,7 @@ export default function AlpacaBrokerPage() {
                             <div className="text-gray-500">No broker connected yet.</div>
                         )}
                     </div>
+                    <BrokerModeToggle />
                 </div>
                 </div>
             </div>
