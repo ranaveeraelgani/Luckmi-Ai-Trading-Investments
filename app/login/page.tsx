@@ -27,7 +27,7 @@ export default function LoginPage() {
           setError(signInError.message);
       }
       if (!signInError) {
-          router.push('/stock');
+          router.push('/dashboard');
           router.refresh();
       }
 
