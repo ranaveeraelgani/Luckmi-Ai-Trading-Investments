@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase'  // Adjust path if your utility file is elsewhere
+import luckmiAppLogo from '@/app/image/logo/luckmi_app_logo.png';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -56,8 +58,18 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0a0c11] px-4">
       <div className="w-full max-w-md bg-[#11151c] border border-gray-700 rounded-3xl p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">AI Trading Platform</h1>
+        <div className="text-center mb-7">
+          <div className="relative flex justify-center mb-3">            
+              <Image
+                src={luckmiAppLogo}
+                alt="Luckmi app logo"
+                width={144}
+                height={144}
+                className="h-24 w-auto"
+                priority
+              />           
+          </div>
+          <h1 className="text-3xl font-bold text-white">Luckmi AI Trading Assistant</h1>
           <p className="text-gray-400 mt-2">Sign in to access your trading tools</p>
         </div>
 
