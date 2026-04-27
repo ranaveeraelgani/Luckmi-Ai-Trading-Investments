@@ -23,7 +23,7 @@ export async function insertEngineRun({
     user_id: userId,
     run_type: runType,
     status,
-    trades_count: tradesExecuted,
+    trades_executed: tradesExecuted,
     stocks_processed: stocksProcessed,
     error_message: errorMessage,
     blocked_reason: blockedReason,

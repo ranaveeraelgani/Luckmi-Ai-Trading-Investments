@@ -249,7 +249,7 @@ async function getUserDetail(userId: string) {
       .select(`
         id,
         status,
-        trades_count,
+        trades_executed,
         error_message,
         created_at
       `)
@@ -751,7 +751,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
                           </div>
                         </div>
                         <div className="text-sm text-gray-300 sm:text-right">
-                          <div>Trades: {run.trades_count ?? 0}</div>
+                          <div>Trades: {run.trades_executed ?? 0}</div>
                         </div>
                       </div>
 
