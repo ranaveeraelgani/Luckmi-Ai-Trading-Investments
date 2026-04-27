@@ -1,5 +1,6 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { runTradeCycleForUser } from '@/app/lib/engine/runTradeCycleForUser';
+import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";
 
 export async function GET() {
   const supabase = await createClient();
@@ -10,6 +11,9 @@ export async function GET() {
 
   if (!user) {
     return new Response('Unauthorized', { status: 401 });
+  }
+   if (!isMarketOpenNow()) {
+    return new Response('Market is closed', { status: 403 });
   }
   console.log('Running trade cycle for user:', user.id);
   const result = await runTradeCycleForUser({
