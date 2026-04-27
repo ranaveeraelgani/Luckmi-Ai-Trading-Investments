@@ -1,4 +1,5 @@
 import { placeAutoBrokerOrder } from "@/app/lib/broker/placeAutoBrokerOrder";
+import { checkBrokerAccountCanTrade } from "./checkBrokerAccountCanTrade";
 
 type BrokerSide = "buy" | "sell";
 
@@ -119,6 +120,16 @@ export async function executeBrokerTradesForUser({
     }
 
     try {
+          const guard = await checkBrokerAccountCanTrade(userId);
+        
+          if (!guard.allowed) {
+            // optional: log to DB later
+            return {
+              success: false,
+              skipped: true,
+              reason: guard.reason,
+            };
+          }
       const order = await placeAutoBrokerOrder({
         userId,
         autoStockId: validated.autoStockId,
