@@ -398,27 +398,31 @@ export async function runTradeCycleForUser({
       quotes
     );
 
-    const brokerMode = await getBrokerExecutionMode(userId);
+    const needsBrokerExecution = trades.length > 0;
+    const brokerMode = needsBrokerExecution
+      ? await getBrokerExecutionMode(userId)
+      : { enabled: false, mode: null, reason: null };
 
-      if (!brokerMode.enabled) {
-            await insertEngineRun({
-                userId,
-                runType,
-                status: "blocked",
-                blockedReason: brokerMode.reason || "Broker execution not enabled",
-            });
-          return {
-              success: false,
-              status: "blocked",
-              processed: 0,
-              tradesExecuted: 0,
-              message: brokerMode.reason || "Broker execution not enabled",
-              updated: hasChanges,
-              brokerMode: false,
-          };
-      }
+    if (needsBrokerExecution && !brokerMode.enabled) {
+      await insertEngineRun({
+        userId,
+        runType,
+        status: "blocked",
+        blockedReason: brokerMode.reason || "Broker execution not enabled",
+      });
 
-    if (brokerMode.enabled && trades.length > 0 && hasChanges) {
+      return {
+        success: false,
+        status: "blocked",
+        processed: 0,
+        tradesExecuted: 0,
+        message: brokerMode.reason || "Broker execution not enabled",
+        updated: hasChanges,
+        brokerMode: false,
+      };
+    }
+
+    if (needsBrokerExecution && hasChanges) {
        const  brokerExecution = await executeBrokerTradesForUser({
             userId,
             trades: trades,
