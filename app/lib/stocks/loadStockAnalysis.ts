@@ -28,7 +28,7 @@ export type StockAnalysisResult = {
   recentCloses: number[];
   lastClose?: number | null;
   aiRecommendation: {
-    action: "Buy" | "Hold" | "Sell" | "Strong Buy" | null;
+    action: "Buy" | "Hold" | "Avoid" | "Sell" | "Strong Buy" | null;
     reason: string;
     confidence: number;
     aiScore: number | null;
@@ -95,7 +95,7 @@ export async function loadStockAnalysis({
     recentCloses,
     lastClose,
     aiRecommendation: {
-      action: (aiRecommendation?.action as "Buy" | "Hold" | "Sell" | "Strong Buy" | null) ?? null,
+      action: (aiRecommendation?.action as "Buy" | "Hold" | "Avoid" | "Sell" | "Strong Buy" | null) ?? null,
       reason: aiRecommendation?.reason || "",
       confidence: aiRecommendation?.confidence || 50,
       aiScore: aiRecommendation?.aiScore || null,

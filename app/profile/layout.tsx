@@ -1,0 +1,19 @@
+import { redirect } from "next/navigation";
+import { createClient } from "@/app/lib/supabaseServer";
+
+export default async function ProfileLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  return <>{children}</>;
+}

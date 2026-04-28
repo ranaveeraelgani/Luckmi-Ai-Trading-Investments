@@ -558,36 +558,36 @@ export default function AutoTradingPage() {
 
                   return (
                     <div key={stock.id} className="rounded-3xl border border-white/5 bg-[#0F1117] p-4">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenStocks((prev) => ({
-                            ...prev,
-                            [stock.id]: !prev[stock.id],
-                          }))
-                        }
-                        className="flex w-full flex-col gap-4 text-left lg:flex-row lg:items-center lg:justify-between"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="text-xs text-gray-500">{isOpen ? "▲" : "▼"}</div>
+                      <div className="flex w-full flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenStocks((prev) => ({
+                                ...prev,
+                                [stock.id]: !prev[stock.id],
+                              }))
+                            }
+                            className="flex min-w-0 items-center gap-3 text-left"
+                          >
+                            <div className="text-xs text-gray-500">{isOpen ? "▲" : "▼"}</div>
 
-                          <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <div className="text-xl font-semibold text-white">{stock.symbol}</div>
                               <Pill className={statusClass(stock.status)}>
                                 {stock.status || "idle"}
-                              </Pill>                            
-                                {stock.compound_profits ? (
-                                    <Pill className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300 px-2 py-0.3 rounded-2xl">
-                                        ♻️
-                                    </Pill>
-                                ) : null}
+                              </Pill>
+                              {stock.compound_profits ? (
+                                <Pill className="rounded-2xl border-emerald-500/20 bg-emerald-500/10 px-2 py-0.3 text-emerald-300">
+                                  ♻️
+                                </Pill>
+                              ) : null}
 
-                                {stock.rinse_repeat ? (
-                                    <Pill className="border-blue-500/20 bg-blue-500/10 text-blue-300 px-2 py-1 rounded-2xl">
-                                        🔄 × {stock.max_repeats ?? 0}
-                                    </Pill>
-                                ) : null}
+                              {stock.rinse_repeat ? (
+                                <Pill className="rounded-2xl border-blue-500/20 bg-blue-500/10 px-2 py-1 text-blue-300">
+                                  🔄 × {stock.max_repeats ?? 0}
+                                </Pill>
+                              ) : null}
 
                               {ai?.action && (
                                 <Pill className="border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]">
@@ -595,20 +595,83 @@ export default function AutoTradingPage() {
                                 </Pill>
                               )}
                             </div>
-                          </div>
+                          </button>
+
+                          {!isOpen && (
+                            stock.has_open_position ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSellNow(stock)}
+                                disabled={actionLoadingId === stock.id}
+                                aria-label={`Sell ${stock.symbol}`}
+                                title={`Sell ${stock.symbol}`}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  className="h-3.5 w-3.5"
+                                  aria-hidden="true"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h10" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 3l4 4-4 4" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 17H10" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14 13l-4 4 4 4" />
+                                </svg>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAutoStock(stock)}
+                                disabled={actionLoadingId === stock.id}
+                                aria-label={`Remove ${stock.symbol}`}
+                                title={`Remove ${stock.symbol}`}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  className="h-3.5 w-3.5"
+                                  aria-hidden="true"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 6V4h8v2" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l1 14h10l1-14" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 10v7M14 10v7" />
+                                </svg>
+                              </button>
+                            )
+                          )}
                         </div>
 
                         {!isOpen && (
-                          <div className="grid grid-cols-3 gap-3 text-right sm:grid-cols-6 lg:min-w-[680px]">
-                            <MiniMetric label="Price" value={formatMoney(price)} />
-                            <MiniMetric label="Move" value={formatPercent(change)} valueClassName={change >= 0 ? "text-emerald-300" : "text-red-300"} />
-                            <MiniMetric label="Shares" value={shares || 0} />
-                            <MiniMetric label="Allocated" value={formatCompactMoney(stock.allocation)} />
-                            <MiniMetric label="P&L" value={`${pnl >= 0 ? "+" : ""}${formatCompactMoney(pnl)}`} valueClassName={pnlClass(pnl)} />
-                            <MiniMetric label="Available" value={formatCompactMoney(available)} valueClassName="text-[#F5C76E]" />
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenStocks((prev) => ({
+                                ...prev,
+                                [stock.id]: !prev[stock.id],
+                              }))
+                            }
+                            className="w-full text-left"
+                          >
+                            <div className="grid grid-cols-3 gap-3 text-right sm:grid-cols-6">
+                              <MiniMetric label="Price" value={formatMoney(price)} />
+                              <MiniMetric label="Move" value={formatPercent(change)} valueClassName={change >= 0 ? "text-emerald-300" : "text-red-300"} />
+                              <MiniMetric label="Shares" value={shares || 0} />
+                              <MiniMetric label="Allocated" value={formatCompactMoney(stock.allocation)} />
+                              <MiniMetric label="P&L" value={`${pnl >= 0 ? "+" : ""}${formatCompactMoney(pnl)}`} valueClassName={pnlClass(pnl)} />
+                              <MiniMetric label="Available" value={formatCompactMoney(available)} valueClassName="text-[#F5C76E]" />
+                            </div>
+                          </button>
                         )}
-                      </button>
+                      </div>
 
                         {isOpen && (
                         <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1.15fr]">
@@ -662,26 +725,6 @@ export default function AutoTradingPage() {
                                 >
                                 Add Capital
                                 </button>
-
-                                {stock.has_open_position ? (
-                                <button
-                                    type="button"
-                                    onClick={() => handleSellNow(stock)}
-                                    disabled={actionLoadingId === stock.id}
-                                    className="rounded-2xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
-                                >
-                                    Sell Now
-                                </button>
-                                ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => handleDeleteAutoStock(stock)}
-                                    disabled={actionLoadingId === stock.id}
-                                    className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
-                                >
-                                    Remove
-                                </button>
-                                )}
                             </div>
                             </div>
                         </div>

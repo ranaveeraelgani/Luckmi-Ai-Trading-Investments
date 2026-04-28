@@ -65,7 +65,7 @@ interface CandlestickContext {
   raw: CandleData;
 }
 interface AiRecommendation {
-  action: 'Buy' | 'Hold' | 'Sell' | 'Strong Buy' | null;
+  action: 'Buy' | 'Hold' | 'Avoid' | 'Sell' | 'Strong Buy' | null;
   reason: string;
   confidence: number;
   aiEstimate?: number;        // ← Add this line
@@ -676,7 +676,7 @@ export default function ChatPage() {
             ctsResult.levels? ctsResult.levels : undefined,
           );
           setAiRecommendation({
-            action: aiRecommendation?.action as 'Buy' | 'Hold' | 'Sell' | 'Strong Buy' | null, reason: aiRecommendation?.reason || '',             
+            action: aiRecommendation?.action as 'Buy' | 'Hold' | 'Avoid' | 'Sell' | 'Strong Buy' | null, reason: aiRecommendation?.reason || '',
              confidence: aiRecommendation?.confidence || 50, aiScore: aiRecommendation?.aiScore || null});  
           fetchNews(selectedStock);
           toast.dismiss(toastId);

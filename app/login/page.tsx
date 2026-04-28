@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase'  // Adjust path if your utility file is elsewhere
@@ -14,6 +14,20 @@ export default function LoginPage() {
   const router = useRouter();
 
   const supabase = createClient();
+
+  useEffect(() => {
+    const redirectIfLoggedIn = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session) {
+        router.replace('/dashboard');
+      }
+    };
+
+    redirectIfLoggedIn();
+  }, [router, supabase]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
