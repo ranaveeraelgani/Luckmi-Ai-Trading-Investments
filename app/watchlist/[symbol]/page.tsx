@@ -86,7 +86,7 @@ useEffect(() => {
             : []
         );
       }
-      console.log("Page data loaded:", { quote: quoteRes, marketNews: marketNewsRes });
+      //console.log("Page data loaded:", { quote: quoteRes, marketNews: marketNewsRes });
     } catch (err: any) {
       if (active) {
         setPageError(err?.message || "Failed to load stock detail");
