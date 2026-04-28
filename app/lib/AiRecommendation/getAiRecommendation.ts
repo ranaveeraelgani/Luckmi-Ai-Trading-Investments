@@ -63,6 +63,11 @@ export const getAiRecommendation = async (
   if (!stock || ctsScore === null) return;
 
   try {
+    const chatApiUrl =
+      typeof window === 'undefined'
+        ? `${(process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000').replace(/\/$/, '')}/api/chat`
+        : '/api/chat';
+
     const safeLastRSI = lastRSI?.toFixed(2) ?? 'N/A';
     const safeLastMACD = lastMACD ?? 'N/A';
     const safeLastSignal = lastSignal ?? 'N/A';
@@ -173,7 +178,7 @@ CONFIDENCE: [0-100]
 RISK FLAGS: [comma-separated short phrases OR "None"]
 `;
 
-    const res = await fetch('/api/chat', {
+    const res = await fetch(chatApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
@@ -198,7 +203,7 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
     const riskFlagsMatch = textClean.match(/RISK FLAGS:\s*(.+?)$/i);
 
     if (actionMatch) {
-      const action = actionMatch[1] as 'Buy' | 'Hold' | 'Sell' | 'Strong Buy';
+      const action = actionMatch[1] as 'Buy' | 'Hold' | 'Avoid' | 'Sell' | 'Strong Buy';
       const reason = reasonMatch ? reasonMatch[1].trim() : 'No reasoning provided';
       const aiScore = aiScoreMatch ? parseInt(aiScoreMatch[1]) : null;
       const confidence = confMatch ? Number(confMatch[1]) : 50;
