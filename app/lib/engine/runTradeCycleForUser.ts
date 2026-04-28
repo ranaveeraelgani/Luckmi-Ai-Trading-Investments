@@ -57,6 +57,68 @@ async function fetchQuotes(baseUrl: string, symbols: string[]) {
   return quotes;
 }
 
+async function persistAiDecisionDailyAware({
+  supabase,
+  userId,
+  stock,
+}: {
+  supabase: any;
+  userId: string;
+  stock: any;
+}) {
+  if (!stock.lastAiDecision) return;
+
+  const payload = {
+    user_id: userId,
+    auto_stock_id: stock.id,
+    symbol: stock.symbol,
+    action: stock.lastAiDecision.action,
+    reason: stock.lastAiDecision.reason,
+    confidence: stock.lastAiDecision.confidence ?? null,
+    cts_score: stock.lastAiDecision.ctsScore ?? null,
+    cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
+  };
+
+  // Hold decisions should be at most one row per stock per UTC day.
+  if (stock.lastAiDecision.action === "Hold") {
+    const startOfUtcDay = new Date();
+    startOfUtcDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfUtcDay = new Date(startOfUtcDay);
+    endOfUtcDay.setUTCDate(endOfUtcDay.getUTCDate() + 1);
+
+    const { data: existingDailyHold } = await supabase
+      .from("ai_decisions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("auto_stock_id", stock.id)
+      .eq("action", "Hold")
+      .gte("created_at", startOfUtcDay.toISOString())
+      .lt("created_at", endOfUtcDay.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingDailyHold?.id) {
+      await supabase
+        .from("ai_decisions")
+        .update({
+          reason: payload.reason,
+          confidence: payload.confidence,
+          cts_score: payload.cts_score,
+          cts_breakdown: payload.cts_breakdown,
+        })
+        .eq("id", existingDailyHold.id);
+    } else {
+      await supabase.from("ai_decisions").insert(payload);
+    }
+
+    return;
+  }
+
+  await supabase.from("ai_decisions").insert(payload);
+}
+
 async function saveEngineResults({
   supabase,
   userId,
@@ -109,18 +171,7 @@ async function saveEngineResults({
         .eq("auto_stock_id", stock.id);
     }
 
-    if (stock.lastAiDecision && stock.lastAiDecision.action !== "Hold") {
-      await supabase.from("ai_decisions").insert({
-        user_id: userId,
-        auto_stock_id: stock.id,
-        symbol: stock.symbol,
-        action: stock.lastAiDecision.action,
-        reason: stock.lastAiDecision.reason,
-        confidence: stock.lastAiDecision.confidence ?? null,
-        cts_score: stock.lastAiDecision.ctsScore ?? null,
-        cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
-      });
-    }
+    await persistAiDecisionDailyAware({ supabase, userId, stock });
   }
 
   if (trades.length > 0) {
@@ -155,18 +206,7 @@ export async function saveEngineStateOnly({
       .eq("id", stock.id)
       .eq("user_id", userId);
 
-    if (stock.lastAiDecision) {
-      await supabase.from("ai_decisions").insert({
-        user_id: userId,
-        auto_stock_id: stock.id,
-        symbol: stock.symbol,
-        action: stock.lastAiDecision.action,
-        reason: stock.lastAiDecision.reason,
-        confidence: stock.lastAiDecision.confidence ?? null,
-        cts_score: stock.lastAiDecision.ctsScore ?? null,
-        cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
-      });
-    }
+    await persistAiDecisionDailyAware({ supabase, userId, stock });
   }
 }
 

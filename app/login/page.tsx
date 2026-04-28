@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const router = useRouter();
 
   const supabase = createClient();
@@ -33,6 +34,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setInfo('');
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email,
@@ -54,6 +56,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setInfo('');
 
     const { error: signUpError } = await supabase.auth.signUp({
       email,
@@ -64,6 +67,30 @@ export default function LoginPage() {
       setError(signUpError.message);
     } else {
       alert('Check your email for the confirmation link!');
+    }
+
+    setLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Enter your email first to receive a reset link.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setInfo('');
+
+    const redirectTo = `${window.location.origin}/reset-password`;
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+
+    if (resetError) {
+      setError(resetError.message);
+    } else {
+      setInfo('Password reset link sent. Check your email.');
     }
 
     setLoading(false);
@@ -101,7 +128,17 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Password</label>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="block text-sm text-gray-400">Password</label>
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={loading}
+                className="text-xs text-blue-400 transition hover:text-blue-300 disabled:opacity-50"
+              >
+                Forgot password?
+              </button>
+            </div>
             <input
               type="password"
               value={password}
@@ -113,6 +150,7 @@ export default function LoginPage() {
           </div>
 
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          {info && <p className="text-emerald-400 text-sm text-center">{info}</p>}
 
           <button
             type="submit"
