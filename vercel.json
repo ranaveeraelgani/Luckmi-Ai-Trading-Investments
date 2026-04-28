@@ -1,8 +1,13 @@
 {
-  "crons": [
-    {
-      "path": "/api/engine/run-cycle",
-      "schedule": "0 13 * * *"
-    }
-  ]
+	"crons": [
+		{
+			"path": "/api/cron/market-cycle",
+			"schedule": "0 13 * * *"
+		}
+	],
+	"functions": {
+		"app/api/cron/market-cycle/route.ts": {
+			"maxDuration": 60
+		}
+	}
 }
