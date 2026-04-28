@@ -3,6 +3,7 @@ import {getNoTradeReasons} from '@/app/lib/evaluateAi/evaluateHelpers/getNoTrade
 import { getTrendStage } from '../evaluateHelpers/getTrendStage';
 import { getMomentumState } from '../evaluateHelpers/getMomentumState';
 import { isFakeBreakout } from '../evaluateHelpers/isFakeBreakout';
+import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 
 // Final evaluateStockForBuy - Rich Prompt + Early Cash Check
 export const evaluateStockForBuy = async (
@@ -146,13 +147,26 @@ CONFIDENCE: [0-100]
 
 Decide now.`;
 
-    const res = await fetch('/api/chat', {
+    const chatUrl = `${getBaseUrl().replace(/\/$/, '')}/api/chat`;
+    const res = await fetch(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
     });
 
-    let text = await res.text();
+    const raw = await res.text();
+    if (!res.ok) {
+      throw new Error(`Chat API ${res.status}: ${raw.slice(0, 180)}`);
+    }
+
+    let text = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      text = parsed?.content || parsed?.message || raw;
+    } catch {
+      // Keep raw text when response is not JSON.
+    }
+
     const textClean = text.trim().replace(/\s+/g, ' ');
 
     const actionMatch = textClean.match(/ACTION:\s*(Buy|Hold)/i);
@@ -275,6 +289,7 @@ Decide now.`;
     };
   } catch (err) {
     console.error(`Buy evaluation failed for ${symbol}`, err);
-    return { shouldBuy: false, reason: 'Evaluation error' };
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { shouldBuy: false, reason: `Evaluation error: ${message}` };
   }
 };

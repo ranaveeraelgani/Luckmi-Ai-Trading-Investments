@@ -2,6 +2,7 @@ import { getCtsForSymbol } from '@/app/lib/evaluateAi/evaluateHelpers/getCtsForS
 import { getMomentumState } from '../evaluateHelpers/getMomentumState';
 import { getTrendStage } from '../evaluateHelpers/getTrendStage';
 import { isFakeBreakout } from '../evaluateHelpers/isFakeBreakout';
+import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 // Smart Sell Decision - Uses real AI call with structured prompt
 export const evaluateSellDecision = async (
   symbol: string,
@@ -129,13 +130,26 @@ CONFIDENCE: [0-100]
 
 Decide now.`;
 
-    const res = await fetch('/api/chat', {
+    const chatUrl = `${getBaseUrl().replace(/\/$/, '')}/api/chat`;
+    const res = await fetch(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
     });
 
-    let text = await res.text();
+    const raw = await res.text();
+    if (!res.ok) {
+      throw new Error(`Chat API ${res.status}: ${raw.slice(0, 180)}`);
+    }
+
+    let text = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      text = parsed?.content || parsed?.message || raw;
+    } catch {
+      // Keep raw text when response is not JSON.
+    }
+
     const textClean = text.trim().replace(/\s+/g, ' ');
 
     const actionMatch = textClean.match(/ACTION:\s*(Sell|Hold)/i);
@@ -310,6 +324,7 @@ Decide now.`;
     };
   } catch (err) {
     console.error(`Sell evaluation failed for ${symbol}`, err);
-    return { shouldSell: false, reason: 'Evaluation error' };
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { shouldSell: false, reason: `Evaluation error: ${message}` };
   }
 };

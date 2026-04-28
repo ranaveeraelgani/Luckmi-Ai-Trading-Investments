@@ -4,6 +4,7 @@ import { calculateRSI } from '@/app/lib/ctsHelpers/calculateRSI'
 import { detectRectangleBreakout } from '@/app/lib/ctsHelpers/detectRectangleBreakout'
 import { calculateFinalCTS } from '@/app/lib/calculateScore/calculateFinalCTS';
 import { getNewsSentiment } from '../../ctsHelpers/getNewsSentiment';
+import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 
 const toNumber = (value: string | number | undefined): number => {
   if (value === undefined || value === null) return 0;
@@ -20,6 +21,7 @@ const formatLocalDate = (date: Date): string => {
 
 export const getCtsForSymbol = async (symbol: string) => {
   try {
+    const baseUrl = getBaseUrl().replace(/\/$/, '');
     const now = new Date();
 
     const intradayFrom = formatLocalDate(
@@ -34,7 +36,7 @@ export const getCtsForSymbol = async (symbol: string) => {
     // 1. FETCH INTRADAY 15m
     // =========================
     const intradayRes = await fetch(
-      `/api/polygon-candles?symbol=${symbol}&multiplier=15&timespan=minute&from=${intradayFrom}&to=${toDate}`
+      `${baseUrl}/api/polygon-candles?symbol=${symbol}&multiplier=15&timespan=minute&from=${intradayFrom}&to=${toDate}`
     );
 
     if (!intradayRes.ok) {
@@ -78,7 +80,7 @@ export const getCtsForSymbol = async (symbol: string) => {
     // 2. FETCH DAILY
     // =========================
     const dailyRes = await fetch(
-      `/api/polygon-candles?symbol=${symbol}&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
+      `${baseUrl}/api/polygon-candles?symbol=${symbol}&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
     );
 
     if (!dailyRes.ok) {
@@ -112,7 +114,7 @@ export const getCtsForSymbol = async (symbol: string) => {
     let spyDailyCloses: number[] = [];
     try {
       const spyRes = await fetch(
-        `/api/polygon-candles?symbol=SPY&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
+        `${baseUrl}/api/polygon-candles?symbol=SPY&multiplier=1&timespan=day&from=${dailyFrom}&to=${toDate}`
       );
       if (spyRes.ok) {
         const spyData = await spyRes.json();
