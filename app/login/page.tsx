@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase'  // Adjust path if your utility file is elsewhere
@@ -12,23 +12,45 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const router = useRouter();
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     const redirectIfLoggedIn = async () => {
       const {
         data: { session },
+        error: sessionError,
       } = await supabase.auth.getSession();
+
+      // Stale browser tokens can throw Invalid Refresh Token and cause noisy flicker loops.
+      if (sessionError) {
+        if (sessionError.message?.toLowerCase().includes('invalid refresh token')) {
+          await supabase.auth.signOut();
+        }
+        setCheckingAuth(false);
+        return;
+      }
 
       if (session) {
         router.replace('/dashboard');
+        return;
       }
+
+      setCheckingAuth(false);
     };
 
     redirectIfLoggedIn();
   }, [router, supabase]);
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0c11] px-4">
+        <p className="text-sm text-gray-400">Checking session...</p>
+      </div>
+    );
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
