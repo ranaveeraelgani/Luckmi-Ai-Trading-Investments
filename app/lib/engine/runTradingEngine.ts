@@ -264,6 +264,8 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                         ctsBreakdown: sellDecision?.ctsBreakdown || null
                     }
                 };
+
+                hasChanges = true;
             }
         }
 
@@ -298,6 +300,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 updatedStocks,
                 currentPrice
             );
+
             if (buyResult?.shouldBuy && buyResult.entryPrice) {
                 const capitalToUse = getSmartPositionSize(
                     buyResult.ctsScore,
@@ -349,6 +352,26 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     },
 
                     tradeHistory: [...(stock.tradeHistory || []), newTrade],
+                };
+
+                hasChanges = true;
+            } else {
+                updatedStocks[i] = {
+                    ...stock,
+                    lastEvaluatedPrice: currentPrice,
+                    lastAiDecision: {
+                        action: 'Hold',
+                        price: currentPrice,
+                        reason:
+                            buyResult?.thesis ||
+                            buyResult?.reason ||
+                            buyResult?.noTradeReasons?.[0] ||
+                            'No strong signal',
+                        confidence: buyResult?.confidence || 50,
+                        timestamp: new Date(),
+                        ctsScore: buyResult?.ctsScore || null,
+                        ctsBreakdown: buyResult?.breakdown || null,
+                    },
                 };
 
                 hasChanges = true;
