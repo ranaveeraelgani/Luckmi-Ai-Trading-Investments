@@ -6,9 +6,11 @@ import { runTradeCycleForAllUsers } from "@/app/lib/engine/runTradeCycleForAllUs
 import { startCronRun, finishCronRun } from "@/app/lib/cron/logCronRun";
 
 const JOB_NAME = "market-cycle";
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
 
   const auth = req.headers.get("authorization");
   if (auth !== `Bearer ${process.env.ENGINE_SECRET}`) {
@@ -16,8 +18,10 @@ export async function GET(req: Request) {
   }
 
   const runId = await startCronRun({ jobName: JOB_NAME });
+  console.info(`[cron:${JOB_NAME}] started runId=${runId ?? "none"} elapsedMs=${elapsed()}`);
 
   try {
+    console.info(`[cron:${JOB_NAME}] market-check elapsedMs=${elapsed()}`);
     if (!isMarketOpenNow()) {
       if (runId) {
         await finishCronRun({
@@ -32,13 +36,20 @@ export async function GET(req: Request) {
         });
       }
 
+      console.info(`[cron:${JOB_NAME}] skipped market-closed elapsedMs=${elapsed()}`);
+
       return NextResponse.json({
         skipped: true,
         reason: "Market closed",
       });
     }
 
+    console.info(`[cron:${JOB_NAME}] running trade-cycle-all-users elapsedMs=${elapsed()}`);
     const result = await runTradeCycleForAllUsers();
+    console.info(
+      `[cron:${JOB_NAME}] trade-cycle-all-users complete elapsedMs=${elapsed()} processedUsers=${result.processedUsers ?? 0} usersUpdated=${result.usersUpdated ?? 0} totalStocksProcessed=${result.totalStocksProcessed ?? 0}`
+    );
+
     const tradesExecuted = Array.isArray(result.results)
       ? result.results.reduce((sum, userResult) => {
           if (
@@ -68,11 +79,17 @@ export async function GET(req: Request) {
       });
     }
 
+    console.info(`[cron:${JOB_NAME}] finish success elapsedMs=${elapsed()} tradesExecuted=${tradesExecuted}`);
+
     return NextResponse.json({
       success: true,
       result,
     });
   } catch (error: any) {
+    console.error(
+      `[cron:${JOB_NAME}] failed elapsedMs=${elapsed()} message=${error?.message || "Cron failed"}`
+    );
+
     if (runId) {
       await finishCronRun({
         runId,
