@@ -276,6 +276,7 @@ Decide now.`;
     return {
       shouldBuy,
       entryPrice: shouldBuy ? currentPrice : undefined,
+      reason: reason.substring(0, 700),
       thesis: thesis.substring(0, 240),
       confidence,
       ctsScore,

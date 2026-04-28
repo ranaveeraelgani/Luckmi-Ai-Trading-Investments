@@ -185,6 +185,10 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 );
 
                 if (buyResult?.shouldBuy && buyResult.entryPrice) {
+                    const buyReason =
+                        buyResult.reason ||
+                        buyResult.thesis ||
+                        'Buy criteria met';
 
                     const capitalToUse = getSmartPositionSize(
                         buyResult.ctsScore,
@@ -209,7 +213,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                         price: buyResult.entryPrice,
                         created_at: new Date().toISOString(),
                         amount: sharesToBuy * buyResult.entryPrice,
-                        reason: buyResult.thesis,
+                        reason: buyReason,
                         confidence: buyResult.confidence,
                         cts_score: buyResult.ctsScore,
                     };
@@ -227,7 +231,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                         lastAiDecision: {
                             action: 'Buy More',
                             price: buyResult.entryPrice,
-                            reason: buyResult.thesis,
+                            reason: buyReason,
                             confidence: buyResult.confidence,
                             timestamp: new Date(),
                             ctsScore: buyResult.ctsScore,
@@ -302,6 +306,11 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
             );
 
             if (buyResult?.shouldBuy && buyResult.entryPrice) {
+                const buyReason =
+                    buyResult.reason ||
+                    buyResult.thesis ||
+                    'Buy criteria met';
+
                 const capitalToUse = getSmartPositionSize(
                     buyResult.ctsScore,
                     availableCash,
@@ -322,7 +331,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     price: buyResult.entryPrice,
                     created_at: new Date().toISOString(),
                     amount: sharesToBuy * buyResult.entryPrice,
-                    reason: buyResult.thesis,
+                    reason: buyReason,
                     confidence: buyResult.confidence,
                     cts_score: buyResult.ctsScore,
                 };
@@ -344,7 +353,7 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                     lastAiDecision: {
                         action: 'Buy',
                         price: buyResult.entryPrice,
-                        reason: buyResult.thesis,
+                        reason: buyReason,
                         confidence: buyResult.confidence,
                         timestamp: new Date(),
                         ctsScore: buyResult.ctsScore,
@@ -363,8 +372,8 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                         action: 'Hold',
                         price: currentPrice,
                         reason:
-                            buyResult?.thesis ||
                             buyResult?.reason ||
+                            buyResult?.thesis ||
                             buyResult?.noTradeReasons?.[0] ||
                             'No strong signal',
                         confidence: buyResult?.confidence || 50,
