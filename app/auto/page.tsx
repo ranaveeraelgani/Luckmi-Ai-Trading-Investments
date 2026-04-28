@@ -423,6 +423,8 @@ export default function AutoTradingPage() {
     [tradeHistory]
   );
 
+  const shouldScrollAutoStocks = autoStocks.length > 3;
+
   return (
     <div className="min-h-screen bg-[#0F1117] text-white">
       <TopNav activePage="auto" />
@@ -542,7 +544,11 @@ export default function AutoTradingPage() {
                 <p className="mt-2 text-sm text-gray-400">Add a stock to let Luckmi AI monitor paper trades.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div
+                className={`space-y-4 ${
+                  shouldScrollAutoStocks ? "max-h-[70vh] overflow-y-auto pr-1" : ""
+                }`}
+              >
                 {autoStocks.map((stock) => {
                   const quote = quotes[stock.symbol];
                   const price = toNumber(quote?.price);

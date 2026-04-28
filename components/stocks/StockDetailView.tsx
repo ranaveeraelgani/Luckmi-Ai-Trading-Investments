@@ -183,7 +183,7 @@ export default function StockDetailView({
 
   if (loading) {
     return (
-      <div className="rounded-3xl border border-white/5 bg-[#11151C] p-5 text-sm text-gray-400">
+      <div className="mt-2 rounded-3xl border border-white/5 bg-[#11151C] p-5 text-sm text-gray-400">
         Loading analysis...
       </div>
     );
