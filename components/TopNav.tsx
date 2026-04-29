@@ -16,7 +16,8 @@ type ActivePage =
   | "profile"
   | "alpaca"
   | "admin"
-  | "testing-guide";
+  | "testing-guide"
+  | "notifications";
 
 type TopNavProps = {
   activePage?: ActivePage;
@@ -33,6 +34,7 @@ const navItems: { label: string; href: string; key: ActivePage }[] = [
 
 export default function TopNav({ activePage }: TopNavProps) {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   const accountRef = useRef<HTMLDivElement | null>(null);
@@ -51,6 +53,37 @@ export default function TopNav({ activePage }: TopNavProps) {
     }
 
     fetchAdminStatus();
+  }, []);
+
+  useEffect(() => {
+    async function fetchUnreadCount() {
+      try {
+        const res = await fetch('/api/notifications/feed?limit=1', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        setUnreadCount(Number(data?.unreadCount || 0));
+      } catch {
+        setUnreadCount(0);
+      }
+    }
+
+    fetchUnreadCount();
+
+    const interval = window.setInterval(fetchUnreadCount, 15000);
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        fetchUnreadCount();
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', fetchUnreadCount);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', fetchUnreadCount);
+    };
   }, []);
 
   useEffect(() => {
@@ -131,6 +164,22 @@ export default function TopNav({ activePage }: TopNavProps) {
           </nav>
 
           <div className="hidden items-center gap-3 lg:flex">
+            <Link
+              href="/notifications"
+              className={`relative rounded-xl border px-3 py-2 text-sm transition ${
+                activePage === 'notifications'
+                  ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200'
+                  : 'border-white/10 bg-white/5 text-gray-200 hover:bg-white/10'
+              }`}
+            >
+              <span aria-hidden>🔔</span>
+              {unreadCount > 0 && (
+                <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </Link>
+
             <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
               ● Paper Trading
             </div>
@@ -251,6 +300,13 @@ export default function TopNav({ activePage }: TopNavProps) {
                   className={mobileNavClass("profile")}
                 >
                   Account
+                </Link>
+                <Link
+                  href="/notifications"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={mobileNavClass('notifications')}
+                >
+                  Notifications {unreadCount > 0 ? `(${unreadCount > 99 ? '99+' : unreadCount})` : ''}
                 </Link>
                 <Link
                   href="/alpaca"

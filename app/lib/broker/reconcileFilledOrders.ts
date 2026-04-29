@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+import { createNotificationService } from '@/app/lib/notifications/service';
 
 function n(value: unknown, fallback = 0) {
   const num = Number(value);
@@ -14,6 +15,8 @@ function isFilled(order: any) {
 }
 
 export async function reconcileFilledOrders(userId: string) {
+  const notificationService = createNotificationService();
+
   const { data: orders, error } = await supabaseAdmin
     .from("broker_orders")
     .select(`
@@ -94,6 +97,25 @@ export async function reconcileFilledOrders(userId: string) {
     if (tradeError) {
       console.error("Failed to insert reconciled trade:", tradeError);
       continue;
+    }
+
+    try {
+      await notificationService.queueEvent({
+        userId,
+        type: 'trade_filled',
+        title: `Trade filled: ${String(order.symbol || '').toUpperCase()}`,
+        body: `${order.side === 'buy' ? 'Bought' : 'Sold'} ${shares} ${String(order.symbol || '').toUpperCase()} at $${price.toFixed(2)}.`,
+        url: '/profile',
+        idempotencyKey: `trade-filled:${brokerOrderId}`,
+        metadata: {
+          brokerOrderId,
+          side: order.side,
+          shares,
+          price,
+        },
+      });
+    } catch (notifyError) {
+      console.warn('Failed to queue trade-filled notification:', notifyError);
     }
 
       if (order.auto_stock_id && order.side === "buy") {
