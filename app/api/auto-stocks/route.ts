@@ -1,3 +1,24 @@
+/**
+ * @swagger
+ * /api/portfolio/auto:
+ *   get:
+ *     summary: Get auto trading portfolio
+ *     tags: [Portfolio]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Auto trading positions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 positions:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/AutoPosition'
+ */
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
 

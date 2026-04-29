@@ -23,15 +23,15 @@ function Step({
   );
 }
 
-export default function TestingGuidePage() {
+export default function UserGuidePage() {
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
-      <TopNav activePage="testing-guide" />
+      <TopNav activePage="user-guide" />
 
       <main className="mx-auto max-w-6xl p-4 sm:p-6">
         <section className="rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
           <p className="inline-flex items-center rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
-            Testing Guide
+            User Guide
           </p>
           <h1 className="mt-4 text-3xl font-semibold leading-tight sm:text-4xl">
             How Auto Trading Works in Luckmi

@@ -1,4 +1,13 @@
-// app/api/cron/market-cycle/route.ts
+/**
+ * @swagger
+ * /api/cron/market-cycle:
+ *   get:
+ *     summary: Execute trading engine cycle
+ *     tags: [Cron]
+ *     responses:
+ *       200:
+ *         description: Trading cycle executed
+ */
 
 import { NextResponse } from "next/server";
 import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";

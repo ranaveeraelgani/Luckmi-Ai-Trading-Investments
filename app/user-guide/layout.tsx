@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/app/lib/supabaseServer";
 
-export default async function TestingGuideLayout({
+export default async function UserGuideLayout({
   children,
 }: {
   children: React.ReactNode;

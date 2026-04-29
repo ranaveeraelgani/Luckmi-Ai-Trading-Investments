@@ -715,8 +715,11 @@ export default function AutoTradingPage() {
                                 </Pill>
                             </div>
 
-                            <div className="mt-3 line-clamp-3 rounded-2xl bg-[#11151C] p-3 text-sm leading-6 text-gray-300">
-                                {ai?.reason || "No AI reason yet. Run the engine to generate a fresh decision."}
+                            <div className="relative mt-3">
+                              <div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl bg-[#11151C] p-3 pr-4 text-sm leading-6 text-gray-300">
+                              {ai?.reason || "No AI reason yet. Run the engine to generate a fresh decision."}
+                              </div>
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-2xl bg-gradient-to-t from-[#11151C] to-transparent" />
                             </div>
 
                             <div className="mt-3 flex flex-wrap gap-2">
