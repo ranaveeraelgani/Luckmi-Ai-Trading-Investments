@@ -25,7 +25,7 @@ export default function SyncAlpacaButton({
         throw new Error(data?.error || "Failed to sync Alpaca");
       }
 
-      setMessage("Alpaca synced");
+      setMessage("Positions refreshed");
       await onSynced?.();
     } catch (err: any) {
       setMessage(err?.message || "Sync failed");
@@ -42,7 +42,7 @@ export default function SyncAlpacaButton({
         disabled={loading}
         className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
       >
-        {loading ? "Syncing..." : "Sync Alpaca"}
+        {loading ? "Refreshing..." : "Refresh Positions"}
       </button>
 
       {message ? <div className="text-xs text-gray-400">{message}</div> : null}

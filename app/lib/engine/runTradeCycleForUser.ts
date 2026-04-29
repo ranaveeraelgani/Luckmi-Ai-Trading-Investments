@@ -8,6 +8,7 @@ import { acquireEngineLock, releaseEngineLock } from "@/app/lib/engine/helpers/e
 import { getManualCooldownSeconds, getRemainingManualCooldownSeconds} from "@/app/lib/engine/helpers/manual-cooldown";
 import { executeBrokerTradesForUser } from "@/app/lib/broker/executeBrokerTradesForUser";
 import { getBrokerExecutionMode } from "@/app/lib/broker/getBrokerExecutionMode";
+import { reconcileFilledOrders } from "@/app/lib/broker/reconcileFilledOrders";
 
 export type TradeCycleRunType = 'manual' | 'cron' | 'admin';
 
@@ -245,6 +246,8 @@ export async function runTradeCycleForUser({
     }
 
     lockAcquired = true;
+
+  await reconcileFilledOrders(userId);
 
     const entitlements = await getEntitlements(userId);
 
