@@ -16,7 +16,7 @@ type ActivePage =
   | "profile"
   | "alpaca"
   | "admin"
-  | "testing-guide"
+  | "user-guide"
   | "notifications";
 
 type TopNavProps = {
@@ -56,10 +56,27 @@ export default function TopNav({ activePage }: TopNavProps) {
   }, []);
 
   useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
     async function fetchUnreadCount() {
       try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.user) {
+          setUnreadCount(0);
+          return;
+        }
+
         const res = await fetch('/api/notifications/feed?limit=1', { cache: 'no-store' });
-        if (!res.ok) return;
+        if (!res.ok) {
+          setUnreadCount(0);
+          return;
+        }
         const data = await res.json();
         setUnreadCount(Number(data?.unreadCount || 0));
       } catch {
@@ -211,11 +228,11 @@ export default function TopNav({ activePage }: TopNavProps) {
                   </Link>
 
                   <Link
-                    href="/testing-guide"
+                    href="/user-guide"
                     onClick={() => setShowAccountDropdown(false)}
                     className="block px-4 py-3 text-sm text-gray-300 transition hover:bg-white/5 hover:text-white"
                   >
-                    Testing Guide
+                    User Guide
                   </Link>
 
                   <button
@@ -316,11 +333,11 @@ export default function TopNav({ activePage }: TopNavProps) {
                   Alpaca
                 </Link>
                 <Link
-                  href="/testing-guide"
+                  href="/user-guide"
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={mobileNavClass("testing-guide")}
+                  className={mobileNavClass("user-guide")}
                 >
-                  Testing Guide
+                  User Guide
                 </Link>
               </nav>
             </div>

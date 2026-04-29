@@ -1,3 +1,24 @@
+/**
+ * @swagger
+ * /api/admin/cron-runs:
+ *   get:
+ *     summary: Get cron execution history
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of cron runs
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 runs:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/CronRun'
+ */
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
 

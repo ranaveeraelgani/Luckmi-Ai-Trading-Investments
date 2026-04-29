@@ -1,3 +1,24 @@
+/**
+ * @swagger
+ * /api/portfolio:
+ *   get:
+ *     summary: Get personal portfolio
+ *     tags: [Portfolio]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Personal portfolio positions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 positions:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/PortfolioPosition'
+ */
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
 
