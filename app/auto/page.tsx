@@ -234,11 +234,31 @@ export default function AutoTradingPage() {
   const [engineCollapsed, setEngineCollapsed] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [isAiThinking, setIsAiThinking] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+
+  async function refreshDashboardData() {
+    await Promise.all([fetchAutoStocks(), fetchLastRun(), fetchTrades()]);
+    setLastUpdatedAt(new Date().toISOString());
+  }
 
   useEffect(() => {
-    fetchAutoStocks();
-    fetchLastRun();
-    fetchTrades();
+    void refreshDashboardData();
+  }, []);
+
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshDashboardData();
+      }
+    };
+
+    const intervalId = window.setInterval(refreshIfVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, []);
 
   async function fetchAutoStocks() {
@@ -336,6 +356,7 @@ export default function AutoTradingPage() {
 
       await fetchAutoStocks();
       addToAutoLog(`${stock.symbol} allocation increased by ${formatMoney(amount)}`);
+      setLastUpdatedAt(new Date().toISOString());
     } finally {
       setActionLoadingId(null);
     }
@@ -366,6 +387,7 @@ export default function AutoTradingPage() {
 
       await fetchAutoStocks();
       addToAutoLog(`${stock.symbol} removed from Auto Trading`);
+      setLastUpdatedAt(new Date().toISOString());
     } catch (err: any) {
       addToAutoLog(err?.message || `Failed to remove ${stock.symbol}`);
     } finally {
@@ -399,6 +421,7 @@ export default function AutoTradingPage() {
       await fetchAutoStocks();
       await fetchLastRun();
       await fetchTrades();
+      setLastUpdatedAt(new Date().toISOString());
 
       addToAutoLog(`${stock.symbol} sell submitted`);
     } catch (err: any) {
@@ -492,8 +515,9 @@ export default function AutoTradingPage() {
               </div>
 
               <p className="mt-2 max-w-3xl text-sm text-gray-400">
-                Your AI-managed trading workspace. Review positions, AI analysis, broker status, and trade timelines in one clean view.
+                Your AI-managed paper trading workspace. Review positions, AI analysis, broker status, and trade timelines in one place.
               </p>
+              <p className="mt-1 text-xs text-gray-500">Last updated: {formatDate(lastUpdatedAt)}</p>
             </div>
 
             <button
@@ -524,7 +548,7 @@ export default function AutoTradingPage() {
                       <span className="text-xs text-gray-500">P&L</span>
                     </div>
                   ) : (
-                    <p className="mt-1 text-sm text-gray-400">Compact view of automation health and capital usage.</p>
+                    <p className="mt-1 text-sm text-gray-400">Allocation health and unrealized performance at a glance.</p>
                   )}
                 </div>
                 <span className="text-xs text-gray-500">{portfolioCollapsed ? "▼" : "▲"}</span>
@@ -573,7 +597,7 @@ export default function AutoTradingPage() {
                       <span className="text-xs text-gray-500">{engineCollapsed ? "▼" : "▲"}</span>
                     </div>
                   ) : (
-                    <p className="mt-1 text-sm text-gray-400">Run the AI trade cycle and inspect state only when needed.</p>
+                    <p className="mt-1 text-sm text-gray-400">Run a manual cycle anytime, then open details only when you need them.</p>
                   )}
                 </button>
                 <div className="flex items-center gap-2">
@@ -624,7 +648,7 @@ export default function AutoTradingPage() {
 
           <Card
             title="Auto Stock List"
-            subtitle="Tap a stock for overview and AI analysis. Use the top-right icon to quickly sell or remove."
+            subtitle="Tap a stock for overview and AI analysis. Use the top-right action to quickly sell or remove."
             right={
               <Pill className="border-white/10 bg-white/5 text-gray-300">
                 {totalTrades} trades
@@ -634,7 +658,7 @@ export default function AutoTradingPage() {
             {autoStocks.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-white/10 bg-[#1A1F2B] p-10 text-center">
                 <div className="text-lg font-medium text-white">No auto stocks yet</div>
-                <p className="mt-2 text-sm text-gray-400">Add a stock to let Luckmi AI monitor paper trades.</p>
+                <p className="mt-2 text-sm text-gray-400">Add your first stock and let Luckmi AI monitor paper trades for you.</p>
               </div>
             ) : (
               <div
@@ -691,22 +715,9 @@ export default function AutoTradingPage() {
                             disabled={actionLoadingId === stock.id}
                             aria-label={`Sell ${stock.symbol}`}
                             title={`Sell ${stock.symbol}`}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                            className="inline-flex h-9 items-center justify-center rounded-full border border-[#F5C76E]/40 bg-[#F5C76E]/12 px-3 text-xs font-semibold text-[#F5C76E] transition hover:bg-[#F5C76E]/20 disabled:opacity-50"
                           >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              className="h-4 w-4"
-                              aria-hidden="true"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h10" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M10 3l4 4-4 4" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M20 17H10" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M14 13l-4 4 4 4" />
-                            </svg>
+                            Sell
                           </button>
                         ) : (
                           <button
@@ -762,9 +773,9 @@ export default function AutoTradingPage() {
             )}
           </Card>
 
-          <Card title="Activity Log" subtitle="Recent page actions and engine messages.">
+          <Card title="Activity Log" subtitle="Recent engine events and actions taken on this page.">
             {autoLogs.length === 0 ? (
-              <div className="text-sm text-gray-400">No recent activity yet.</div>
+              <div className="text-sm text-gray-400">No activity yet. Run a cycle or take an action to populate this log.</div>
             ) : (
               <div className="space-y-2">
                 {(showAllActivity ? autoLogs : autoLogs.slice(0, 4)).map((log, index) => (
@@ -893,7 +904,7 @@ export default function AutoTradingPage() {
                                   <LuckmiAiIcon size={36} />
                                   <div>
                                     <div className="text-base font-bold tracking-tight text-white">AI Analysis</div>
-                                    <div className="mt-0.5 text-xs text-gray-400">Last decision from engine run</div>
+                                    <div className="mt-0.5 text-xs text-gray-400">Most recent AI decision from the last engine run</div>
                                   </div>
                                 </div>
                                 <Pill className="border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E] text-xs">
@@ -903,7 +914,7 @@ export default function AutoTradingPage() {
 
                               <div className="relative mt-4">
                                 <div className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-white/5 bg-[#0A0E14] p-4 pr-5 text-sm leading-7 text-gray-200 shadow-inner">
-                                  {selectedStock.last_ai_decision?.reason || "No AI analysis yet. Run the engine to generate a fresh decision."}
+                                  {selectedStock.last_ai_decision?.reason || "No AI analysis yet. Run a manual cycle to generate a fresh decision."}
                                 </div>
                                 <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-2xl bg-gradient-to-t from-[#0A0E14] to-transparent" />
                               </div>
@@ -917,7 +928,7 @@ export default function AutoTradingPage() {
                   {detailTab === "trades" ? (
                     selectedStockTrades.length === 0 ? (
                       <div className="rounded-3xl border border-dashed border-white/10 bg-[#1A1F2B] p-8 text-center text-sm text-gray-400">
-                        No broker-filled trade history for {selectedStock.symbol} yet.
+                        No filled trade history for {selectedStock.symbol} yet.
                       </div>
                     ) : (
                       <div className="divide-y divide-white/5 rounded-3xl border border-white/5 bg-[#0F1117]">
@@ -975,6 +986,7 @@ export default function AutoTradingPage() {
             onCreated={async (createdStock) => {
               await fetchAutoStocks();
               addToAutoLog(`${createdStock?.symbol || "Stock"} added to Auto Trading`);
+              setLastUpdatedAt(new Date().toISOString());
             }}
           />
 

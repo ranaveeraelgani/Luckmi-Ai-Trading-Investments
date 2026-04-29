@@ -1,6 +1,7 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { runTradeCycleForUser } from '@/app/lib/engine/runTradeCycleForUser';
 import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";
+import { reconcileFilledOrders } from '@/app/lib/broker/reconcileFilledOrders';
 
 export async function GET() {
   const supabase = await createClient();
@@ -13,7 +14,15 @@ export async function GET() {
     return new Response('Unauthorized', { status: 401 });
   }
    if (!isMarketOpenNow()) {
-    return new Response('Market is closed', { status: 403 });
+    await reconcileFilledOrders(user.id);
+
+    return Response.json(
+      {
+        success: false,
+        message: 'Market is closed.',
+      },
+      { status: 403 }
+    );
   }
   console.log('Running trade cycle for user:', user.id);
   const result = await runTradeCycleForUser({

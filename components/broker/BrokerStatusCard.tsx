@@ -76,7 +76,7 @@ export default function BrokerStatusCard() {
                     <span className="text-xs text-gray-500">▼</span>
                   </div>
                 ) : (
-                  <p className="mt-0.5 text-[11px] text-gray-400">Synced account, buying power, positions, and recent orders.</p>
+                  <p className="mt-0.5 text-[11px] text-gray-400">Connection status, buying power, balances. Sync & Reconcile works anytime — market open or closed.</p>
                 )}
               </button>
 
@@ -92,7 +92,7 @@ export default function BrokerStatusCard() {
                     <div className="text-xs text-gray-400">Loading broker status...</div>
                 ) : !account ? (
                     <div className="rounded-xl bg-[#1a1f2e] p-3 text-xs text-gray-400">
-                        No synced Alpaca account yet. Click Sync Alpaca after connecting keys.
+                        No synced Alpaca account yet. Connect keys, then click Sync Alpaca.
                     </div>
                 ) : (
                     <div className="space-y-3">
@@ -130,7 +130,7 @@ export default function BrokerStatusCard() {
                             account.account_blocked ||
                             account.transfers_blocked) && (
                                 <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">
-                                    Alpaca account has a broker restriction. Review account status before trading.
+                                    This Alpaca account has a broker restriction. Review account status before trading.
                                 </div>
                             )}
                     </div>
