@@ -404,7 +404,7 @@ export default function PortfolioPage() {
 
                       {mode === "auto" && item.lastAiDecision?.reason ? (
                         <div className="rounded-2xl bg-[#1a1f2e] p-3 sm:col-span-3">
-                          <div className="text-xs text-gray-400">Last AI Reason</div>
+                          <div className="text-xs text-gray-400">Last AI Analysis</div>
                           <div className="mt-1 text-sm text-gray-300">
                             {item.lastAiDecision.reason}
                           </div>
