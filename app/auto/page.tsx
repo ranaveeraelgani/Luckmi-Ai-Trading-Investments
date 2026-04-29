@@ -77,6 +77,13 @@ type Trade = {
 };
 
 type DetailTab = "overview" | "trades";
+type StockFilter = "all" | "in-position" | "sell" | "idle";
+type StockSort = "allocation" | "pnl" | "symbol";
+
+type ConfirmAction = {
+  kind: "sell" | "remove";
+  stock: AutoStock;
+} | null;
 
 function toNumber(value: unknown, fallback = 0) {
   const num = Number(value);
@@ -235,6 +242,9 @@ export default function AutoTradingPage() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<StockFilter>("all");
+  const [activeSort, setActiveSort] = useState<StockSort>("allocation");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
   async function refreshDashboardData() {
     await Promise.all([fetchAutoStocks(), fetchLastRun(), fetchTrades()]);
@@ -362,13 +372,11 @@ export default function AutoTradingPage() {
     }
   }
 
-  async function handleDeleteAutoStock(stock: AutoStock) {
+  async function deleteAutoStock(stock: AutoStock) {
     if (stock.has_open_position) {
       addToAutoLog(`Cannot remove ${stock.symbol} while position is open`);
       return;
     }
-
-    if (!window.confirm(`Remove ${stock.symbol} from Auto Trading?`)) return;
 
     try {
       setActionLoadingId(stock.id);
@@ -395,13 +403,11 @@ export default function AutoTradingPage() {
     }
   }
 
-  async function handleSellNow(stock: AutoStock) {
+  async function sellNow(stock: AutoStock) {
     if (!stock.has_open_position) {
       addToAutoLog(`${stock.symbol} has no open position`);
       return;
     }
-
-    if (!window.confirm(`Sell ${stock.symbol} now?`)) return;
 
     try {
       setActionLoadingId(stock.id);
@@ -459,6 +465,38 @@ export default function AutoTradingPage() {
     [tradeHistory]
   );
 
+  const visibleStocks = useMemo(() => {
+    const filtered = autoStocks.filter((stock) => {
+      if (activeFilter === "in-position") return Boolean(stock.has_open_position);
+      if (activeFilter === "idle") {
+        const status = String(stock.status || "").toLowerCase();
+        return !stock.has_open_position || status === "idle";
+      }
+      if (activeFilter === "sell") {
+        return String(stock.last_ai_decision?.action || "").toLowerCase().includes("sell");
+      }
+      return true;
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (activeSort === "symbol") return a.symbol.localeCompare(b.symbol);
+
+      if (activeSort === "allocation") {
+        return toNumber(b.allocation) - toNumber(a.allocation);
+      }
+
+      const pnlFor = (stock: AutoStock) => {
+        if (!stock.has_open_position || !stock.open_position) return -Infinity;
+        const price = toNumber(quotes[stock.symbol]?.price);
+        const entry = toNumber(stock.open_position.entry_price);
+        const shares = toNumber(stock.open_position.shares);
+        return (price - entry) * shares;
+      };
+
+      return pnlFor(b) - pnlFor(a);
+    });
+  }, [activeFilter, activeSort, autoStocks, quotes]);
+
   const selectedStock = useMemo(
     () => autoStocks.find((stock) => stock.id === selectedStockId) || null,
     [autoStocks, selectedStockId]
@@ -497,7 +535,35 @@ export default function AutoTradingPage() {
     };
   }, [isDetailSheetOpen]);
 
-  const shouldScrollAutoStocks = autoStocks.length > 3;
+  const shouldScrollAutoStocks = visibleStocks.length > 3;
+
+  const filterChips: { key: StockFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "in-position", label: "In Position" },
+    { key: "sell", label: "Sell" },
+    { key: "idle", label: "Idle" },
+  ];
+
+  const sortChips: { key: StockSort; label: string }[] = [
+    { key: "allocation", label: "Sort: Allocation" },
+    { key: "pnl", label: "Sort: P&L" },
+    { key: "symbol", label: "Sort: Symbol" },
+  ];
+
+  const confirmActionLabel =
+    confirmAction?.kind === "sell" ? "Sell Position" : "Remove Stock";
+
+  async function runConfirmAction() {
+    if (!confirmAction) return;
+
+    if (confirmAction.kind === "sell") {
+      await sellNow(confirmAction.stock);
+    } else {
+      await deleteAutoStock(confirmAction.stock);
+    }
+
+    setConfirmAction(null);
+  }
 
   return (
     <div className="min-h-screen bg-[#0F1117] text-white">
@@ -648,7 +714,7 @@ export default function AutoTradingPage() {
 
           <Card
             title="Auto Stock List"
-            subtitle="Tap a stock for overview and AI analysis. Use the top-right action to quickly sell or remove."
+            subtitle="Filter by position state or sell signal. Tap a stock for overview and AI analysis."
             right={
               <Pill className="border-white/10 bg-white/5 text-gray-300">
                 {totalTrades} trades
@@ -661,12 +727,57 @@ export default function AutoTradingPage() {
                 <p className="mt-2 text-sm text-gray-400">Add your first stock and let Luckmi AI monitor paper trades for you.</p>
               </div>
             ) : (
-              <div
-                className={`space-y-4 ${
-                  shouldScrollAutoStocks ? "max-h-[70vh] overflow-y-auto pr-1" : ""
-                }`}
-              >
-                {autoStocks.map((stock) => {
+              <div className="space-y-4">
+                <div className="space-y-2 rounded-2xl bg-[#0D121A]/70 p-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {filterChips.map((chip) => (
+                      <button
+                        key={chip.key}
+                        type="button"
+                        onClick={() => setActiveFilter(chip.key)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                          activeFilter === chip.key
+                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                            : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10"
+                        }`}
+                        aria-pressed={activeFilter === chip.key}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {sortChips.map((chip) => (
+                      <button
+                        key={chip.key}
+                        type="button"
+                        onClick={() => setActiveSort(chip.key)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                          activeSort === chip.key
+                            ? "border-[#F5C76E]/40 bg-[#F5C76E]/15 text-[#F5C76E]"
+                            : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10"
+                        }`}
+                        aria-pressed={activeSort === chip.key}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {visibleStocks.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/10 bg-[#1A1F2B] p-6 text-center text-sm text-gray-400">
+                    No stocks match this filter right now.
+                  </div>
+                ) : (
+                  <div
+                    className={`space-y-4 ${
+                      shouldScrollAutoStocks ? "max-h-[70vh] overflow-y-auto pr-1" : ""
+                    }`}
+                  >
+                    <div className="-mx-1.5 space-y-4 px-1.5 sm:-mx-2 sm:px-2">
+                    {visibleStocks.map((stock) => {
                   const quote = quotes[stock.symbol];
                   const price = toNumber(quote?.price);
                   const change = toNumber(quote?.changePercent ?? quote?.percentChange);
@@ -678,7 +789,7 @@ export default function AutoTradingPage() {
                   return (
                     <div
                       key={stock.id}
-                      className="rounded-3xl border border-white/5 bg-[#0F1117] p-4 transition hover:border-white/15"
+                      className="rounded-3xl border border-white/[0.04] bg-[#0F1117] p-3.5 transition hover:border-white/10 sm:p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <button
@@ -711,7 +822,7 @@ export default function AutoTradingPage() {
                         {stock.has_open_position ? (
                           <button
                             type="button"
-                            onClick={() => handleSellNow(stock)}
+                            onClick={() => setConfirmAction({ kind: "sell", stock })}
                             disabled={actionLoadingId === stock.id}
                             aria-label={`Sell ${stock.symbol}`}
                             title={`Sell ${stock.symbol}`}
@@ -722,7 +833,7 @@ export default function AutoTradingPage() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleDeleteAutoStock(stock)}
+                            onClick={() => setConfirmAction({ kind: "remove", stock })}
                             disabled={actionLoadingId === stock.id}
                             aria-label={`Remove ${stock.symbol}`}
                             title={`Remove ${stock.symbol}`}
@@ -767,8 +878,11 @@ export default function AutoTradingPage() {
                         />
                       </div>
                     </div>
-                  );
-                })}
+                    );
+                  })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -1009,6 +1123,63 @@ export default function AutoTradingPage() {
               setSelectedAutoStock(null);
             }}
           />
+
+          {confirmAction ? (
+            <div className="fixed inset-0 z-[60]">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/70"
+                onClick={() => setConfirmAction(null)}
+                aria-label="Close confirmation"
+              />
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="confirm-action-title"
+                className="absolute left-1/2 top-1/2 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/10 bg-[#0F141E] p-5 shadow-2xl"
+              >
+                <h3 id="confirm-action-title" className="text-lg font-semibold text-white">
+                  {confirmActionLabel}
+                </h3>
+                <p className="mt-2 text-sm text-gray-300">
+                  {confirmAction.kind === "sell"
+                    ? `Sell ${confirmAction.stock.symbol} immediately at market price?`
+                    : `Remove ${confirmAction.stock.symbol} from Auto Trading?`}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {confirmAction.kind === "sell"
+                    ? "This closes the current position for this stock."
+                    : "This only removes tracking. No broker position is closed here."}
+                </p>
+
+                <div className="mt-5 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmAction(null)}
+                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 transition hover:bg-white/10"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runConfirmAction}
+                    disabled={actionLoadingId === confirmAction.stock.id}
+                    className={`rounded-2xl px-4 py-2 text-sm font-semibold transition disabled:opacity-50 ${
+                      confirmAction.kind === "sell"
+                        ? "bg-[#F5C76E] text-black hover:bg-[#ffd78a]"
+                        : "bg-red-500 text-white hover:bg-red-400"
+                    }`}
+                  >
+                    {actionLoadingId === confirmAction.stock.id
+                      ? "Processing..."
+                      : confirmAction.kind === "sell"
+                      ? "Confirm Sell"
+                      : "Confirm Remove"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </div>
       </main>
     </div>

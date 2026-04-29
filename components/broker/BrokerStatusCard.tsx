@@ -76,7 +76,7 @@ export default function BrokerStatusCard() {
                     <span className="text-xs text-gray-500">▼</span>
                   </div>
                 ) : (
-                  <p className="mt-0.5 text-[11px] text-gray-400">Connection status, buying power, balances. Sync & Reconcile works anytime — market open or closed.</p>
+                  <p className="mt-0.5 text-[11px] text-gray-400">Connection status, buying power, balances. Refresh Positions works anytime, even when the market is closed.</p>
                 )}
               </button>
 
