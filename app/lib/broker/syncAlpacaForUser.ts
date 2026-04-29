@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 import { getUserBrokerCredentials } from "@/app/lib/broker/getUserBrokerCredentials";
+import { createNotificationService } from '@/app/lib/notifications/service';
 import {
   getAlpacaAccount,
   getAlpacaOrders,
@@ -12,13 +13,16 @@ function n(value: any) {
 }
 
 export async function syncAlpacaForUser(userId: string) {
-  const credentials = await getUserBrokerCredentials(userId);
+  const notificationService = createNotificationService();
 
-  const [account, positions, orders] = await Promise.all([
-    getAlpacaAccount(credentials),
-    getAlpacaPositions(credentials),
-    getAlpacaOrders(credentials, "all"),
-  ]);
+  try {
+    const credentials = await getUserBrokerCredentials(userId);
+
+    const [account, positions, orders] = await Promise.all([
+      getAlpacaAccount(credentials),
+      getAlpacaPositions(credentials),
+      getAlpacaOrders(credentials, "all"),
+    ]);
 
   const now = new Date().toISOString();
 
@@ -128,9 +132,30 @@ export async function syncAlpacaForUser(userId: string) {
     );
   }
 
-  return {
-    account,
-    positions,
-    orders,
-  };
+    return {
+      account,
+      positions,
+      orders,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown broker sync error';
+
+    try {
+      await notificationService.queueEvent({
+        userId,
+        type: 'broker_sync_failed',
+        title: 'Broker sync failed',
+        body: `Alpaca sync failed: ${message}`,
+        url: '/profile',
+        idempotencyKey: `broker-sync-failed:${userId}:${new Date().toISOString().slice(0, 16)}`,
+        metadata: {
+          message,
+        },
+      });
+    } catch (notifyError) {
+      console.warn('Failed to queue broker-sync-failed notification:', notifyError);
+    }
+
+    throw error;
+  }
 }

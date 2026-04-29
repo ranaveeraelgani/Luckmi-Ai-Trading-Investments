@@ -37,7 +37,7 @@ export default function TestingGuidePage() {
             How Auto Trading Works in Luckmi
           </h1>
           <p className="mt-4 max-w-3xl text-sm text-gray-300 sm:text-base">
-            This guide explains the full flow: add stocks, run the engine, review AI decisions,
+            This guide explains the full flow: add stocks, run the run Trade cycle, review AI decisions,
             and connect Alpaca so executions can run through your broker account.
           </p>
 

@@ -1,5 +1,6 @@
 import { placeAutoBrokerOrder } from "@/app/lib/broker/placeAutoBrokerOrder";
 import { checkBrokerAccountCanTrade } from "./checkBrokerAccountCanTrade";
+import { createNotificationService } from '@/app/lib/notifications/service';
 
 type BrokerSide = "buy" | "sell";
 
@@ -98,6 +99,7 @@ export async function executeBrokerTradesForUser({
   userId: string;
   trades: EngineTrade[];
 }) {
+  const notificationService = createNotificationService();
   const placedOrders: any[] = [];
   const skippedTrades: any[] = [];
   const failedTrades: any[] = [];
@@ -123,7 +125,24 @@ export async function executeBrokerTradesForUser({
           const guard = await checkBrokerAccountCanTrade(userId);
         
           if (!guard.allowed) {
-            // optional: log to DB later
+            try {
+              await notificationService.queueEvent({
+                userId,
+                type: 'trade_skipped_safety',
+                title: 'Trade skipped by safety guard',
+                body: guard.reason || 'Broker account guard blocked this trade.',
+                url: '/profile',
+                idempotencyKey: `safety-skip:${userId}:${Date.now()}:${validated.symbol}:${validated.side}`,
+                metadata: {
+                  reason: guard.reason || null,
+                  symbol: validated.symbol,
+                  side: validated.side,
+                },
+              });
+            } catch (notifyError) {
+              console.warn('Failed to queue safety-skip notification:', notifyError);
+            }
+
             return {
               success: false,
               skipped: true,

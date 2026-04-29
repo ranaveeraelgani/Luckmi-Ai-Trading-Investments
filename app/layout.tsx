@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from 'sonner';
+import { OneSignalInit } from '@/components/OneSignalInit';
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -16,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <OneSignalInit />
         {children}
         <Toaster 
           position="top-center" 
