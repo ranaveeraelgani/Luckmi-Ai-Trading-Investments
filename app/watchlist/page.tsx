@@ -137,6 +137,7 @@ export default function WatchlistPage() {
             await loadWatchlist();
         } catch (err) {
             console.error("Failed to add watchlist symbol", err);
+          alert(err instanceof Error ? err.message : "Failed to add watchlist symbol");
         } finally {
             setAddingSymbol(false);
         }

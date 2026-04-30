@@ -169,6 +169,8 @@ export default function ChatPage() {
   const [openStocks, setOpenStocks] = useState<Record<string, boolean>>({});
   const [lastRun, setLastRun] = useState<any>(null);
   const [subscription, setSubscription] = useState<any>(null);
+  const [brokerStatus, setBrokerStatus] = useState<any>(null);
+  const [brokerStatusLoading, setBrokerStatusLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   // toggle for trade history details in auto tab
   const toggleStock = (symbol: string) => {
@@ -512,11 +514,37 @@ export default function ChatPage() {
     fetchSubscription();
   }, []);
 
+  const fetchBrokerStatus = async () => {
+    try {
+      setBrokerStatusLoading(true);
+      const res = await fetch('/api/broker/me', { cache: 'no-store' });
+      if (!res.ok) {
+        setBrokerStatus(null);
+        return;
+      }
+      const data = await res.json();
+      setBrokerStatus(data);
+    } catch (err) {
+      console.error('Failed to fetch broker status', err);
+      setBrokerStatus(null);
+    } finally {
+      setBrokerStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBrokerStatus();
+  }, []);
+
   const autoStockCount = autoStocks.length;
   const stockLimitReached =
     subscription?.enforced && subscription?.maxAutoStocks !== undefined
       ? autoStockCount >= subscription.maxAutoStocks
       : false;
+  const brokerReadyForAutoTrading =
+    brokerStatus?.connection_status === 'connected' &&
+    Boolean(brokerStatus?.last_tested_at);
+  const autoAddBlocked = brokerStatusLoading || stockLimitReached || !brokerReadyForAutoTrading;
   // trade engine last update
   useEffect(() => {
     fetchLastRun();
@@ -598,9 +626,30 @@ export default function ChatPage() {
     }
   }, [resolution, timeRange]);
 
-  const addToWatchlist = (symbol: string) => {
+  const hasLivePriceForSymbol = async (symbol: string) => {
+    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbol)}`, {
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      return false;
+    }
+
+    const rows = await res.json();
+    const quote = Array.isArray(rows) ? rows.find((q: any) => q?.symbol === symbol) : null;
+    const price = Number(quote?.price);
+    return Number.isFinite(price) && price > 0;
+  };
+
+  const addToWatchlist = async (symbol: string) => {
     const upper = symbol.toUpperCase().trim();
     if (!upper || watchlist.includes(upper)) return;
+
+    const hasLivePrice = await hasLivePriceForSymbol(upper);
+    if (!hasLivePrice) {
+      toast.error(`${upper} has no live price. Stale symbols cannot be added.`);
+      return;
+    }
 
     setWatchlist((prev) => [...prev, upper]);
     setWatchlistInput('');
@@ -699,10 +748,10 @@ export default function ChatPage() {
 
 
 
-  const handleWatchlistSubmit = (e: React.FormEvent) => {
+  const handleWatchlistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (watchlistInput.trim()) {
-      addToWatchlist(watchlistInput);
+      await addToWatchlist(watchlistInput);
     }
   };
 
@@ -1767,12 +1816,29 @@ useEffect(() => {
                         />
 
                         <button
-                          onClick={() => setShowAddAutoModal(true)}
-                          disabled={stockLimitReached}
+                          onClick={() => {
+                            if (!brokerReadyForAutoTrading) {
+                              toast.error('Connect Alpaca and run Test Connection before adding auto stocks.');
+                              return;
+                            }
+                            setShowAddAutoModal(true);
+                          }}
+                          disabled={autoAddBlocked}
                           className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 rounded-2xl font-medium flex items-center gap-2 transition-colors"
                         >
                           + Add Stock                          
-                        </button>                       
+                        </button>
+                        {!brokerReadyForAutoTrading ? (
+                          <div className="text-xs text-amber-300">
+                            Connect Alpaca and run Test Connection to enable Add Stock.{' '}
+                            <a
+                              href="/alpaca"
+                              className="font-semibold text-amber-200 underline hover:text-white"
+                            >
+                              Go to Alpaca setup
+                            </a>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -3141,6 +3207,17 @@ useEffect(() => {
               </div>
 
               <div className="p-6 space-y-4">
+                {!brokerReadyForAutoTrading ? (
+                  <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    Connect Alpaca and run Test Connection first.{' '}
+                    <a
+                      href="/alpaca"
+                      className="font-semibold text-amber-100 underline hover:text-white"
+                    >
+                      Go to Alpaca setup
+                    </a>
+                  </div>
+                ) : null}
 
                 {/* Stock Symbol */}
                 <div>
@@ -3245,6 +3322,11 @@ useEffect(() => {
                 </button>
                 <button
                   onClick={async () => {
+                    if (!brokerReadyForAutoTrading) {
+                      alert('Connect Alpaca and run Test Connection before adding auto stocks.');
+                      return;
+                    }
+
                     if (!newAutoSymbol.trim()) {
                       alert("Please enter a stock symbol");
                       return;
@@ -3276,7 +3358,7 @@ useEffect(() => {
                     setMaxRepeats(5);
                     setCustomGuidance('');
                   }}
-                  disabled={!newAutoSymbol.trim()}
+                  disabled={!newAutoSymbol.trim() || !brokerReadyForAutoTrading}
                   className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 rounded-2xl font-medium transition-colors"
                 >
                   Add to Auto Trading

@@ -24,6 +24,34 @@ export async function POST(req: Request) {
       );
     }
 
+    const finnhubApiKey = process.env.FINNHUB_API_KEY;
+    if (!finnhubApiKey) {
+      return NextResponse.json(
+        { error: "Price validation is unavailable right now" },
+        { status: 503 }
+      );
+    }
+
+    const quoteRes = await fetch(
+      `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${finnhubApiKey}`
+    );
+
+    if (!quoteRes.ok) {
+      return NextResponse.json(
+        { error: `Unable to validate live price for ${symbol}` },
+        { status: 400 }
+      );
+    }
+
+    const quoteData = await quoteRes.json();
+    const lastPrice = Number(quoteData?.c);
+    if (!Number.isFinite(lastPrice) || lastPrice <= 0) {
+      return NextResponse.json(
+        { error: `${symbol} has no live price and cannot be added` },
+        { status: 400 }
+      );
+    }
+
     const { data: existing, error: existingError } = await supabase
       .from("watchlists")
       .select("id, symbols")
