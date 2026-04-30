@@ -1,68 +1,192 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import TopNav from "@/components/TopNav";
 
-function Step({
-  number,
-  title,
-  body,
-}: {
-  number: number;
+type GuideSection = {
+  id: string;
   title: string;
-  body: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-      <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/20 text-sm font-semibold text-blue-300">
-        {number}
-      </div>
-      <h3 className="text-sm font-semibold text-white">{title}</h3>
-      <p className="mt-1 text-sm text-gray-300">{body}</p>
-    </div>
-  );
-}
+  href: string;
+  summary: string;
+  steps: string[];
+  adminOnly?: boolean;
+};
 
-function ReportTabCard({
-  audience,
-  tab,
-  purpose,
-  whatToWatch,
-  action,
+const sections: GuideSection[] = [
+  {
+    id: "dashboard",
+    title: "Dashboard",
+    href: "/dashboard",
+    summary:
+      "Use Dashboard first to check account health, recent activity, and where to focus next.",
+    steps: [
+      "Check portfolio snapshot and top movers.",
+      "Review alerts first, then open the page linked by each alert.",
+      "Decide your next action for the day before opening other modules.",
+    ],
+  },
+  {
+    id: "watchlist",
+    title: "Watchlist",
+    href: "/watchlist",
+    summary:
+      "Track candidate symbols before capital is committed. Keep this list clean and intentional.",
+    steps: [
+      "Keep only high-conviction symbols you may trade soon.",
+      "Open symbol detail to review AI analysis and setup quality.",
+      "Move qualified ideas to Portfolio or Auto Trading.",
+    ],
+  },
+  {
+    id: "portfolio",
+    title: "Portfolio",
+    href: "/portfolio",
+    summary:
+      "Monitor open positions, unrealized P&L, and symbol-level conviction after entry.",
+    steps: [
+      "Check exposure and concentration by symbol.",
+      "Review each holding's trend and risk before adding size.",
+      "Trim risk when one symbol dominates total allocation.",
+    ],
+  },
+  {
+    id: "auto-trading",
+    title: "Auto Trading",
+    href: "/auto",
+    summary:
+      "Run the engine, inspect reasons behind Buy/Hold/Sell decisions, and manage automation safely.",
+    steps: [
+      "Add symbols with clear allocation limits.",
+      "Run manual cycle and review decision reasons and confidence.",
+      "Use Next run countdown and broker sync status before rerunning.",
+    ],
+  },
+  {
+    id: "picks",
+    title: "Luckmi Picks",
+    href: "/picks",
+    summary:
+      "Use Picks for idea generation, then validate in Watchlist or Portfolio before acting.",
+    steps: [
+      "Scan top ideas and shortlist 2-5 symbols.",
+      "Validate shortlisted symbols with trend and risk context.",
+      "Promote only validated symbols to your active workflow.",
+    ],
+  },
+  {
+    id: "reports",
+    title: "Reports",
+    href: "/reports",
+    summary:
+      "Use reports to measure behavior quality over time and improve one thing per cycle.",
+    steps: [
+      "Start with Overview pulse metrics.",
+      "Open Risk and Coach tabs for context and concrete recommendations.",
+      "Pick one adjustment and review impact in the next 7d or 30d window.",
+    ],
+  },
+  {
+    id: "admin-reports",
+    title: "Admin Reports",
+    href: "/admin/reports",
+    summary:
+      "Platform-level diagnostics for admins only, including risk concentration and execution reliability.",
+    steps: [
+      "Use Executive tab for overall platform health.",
+      "Check Risk and Execution tabs for operational issues.",
+      "Take one platform action and recheck in the next cycle.",
+    ],
+    adminOnly: true,
+  },
+];
+
+function SectionCard({
+  section,
+  isOpen,
+  onToggle,
 }: {
-  audience: "User" | "Admin";
-  tab: string;
-  purpose: string;
-  whatToWatch: string;
-  action: string;
+  section: GuideSection;
+  isOpen: boolean;
+  onToggle: () => void;
 }) {
-  const tone =
-    audience === "User"
-      ? "border-blue-500/20 bg-blue-500/10 text-blue-100"
-      : "border-amber-500/20 bg-amber-500/10 text-amber-100";
-
   return (
-    <div className={`rounded-2xl border p-4 ${tone}`}>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-white">{tab}</h3>
-        <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-300">
-          {audience}
-        </span>
+    <section
+      id={section.id}
+      className="rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-7"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-xl border border-white/15 bg-white/5 px-2.5 py-1 text-xs text-gray-200 transition hover:bg-white/10"
+            aria-expanded={isOpen}
+            aria-controls={`guide-panel-${section.id}`}
+          >
+            {isOpen ? "Hide" : "Show"}
+          </button>
+          <h2 className="text-xl font-semibold text-white sm:text-2xl">{section.title}</h2>
+        </div>
+        <Link
+          href={section.href}
+          className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+        >
+          Open {section.title}
+        </Link>
       </div>
-      <p className="text-sm text-gray-200">
-        <span className="font-semibold">Purpose:</span> {purpose}
-      </p>
-      <p className="mt-2 text-sm text-gray-200">
-        <span className="font-semibold">What to watch:</span> {whatToWatch}
-      </p>
-      <p className="mt-2 text-sm text-gray-200">
-        <span className="font-semibold">Action:</span> {action}
-      </p>
-    </div>
+
+      <p className="mt-3 text-sm text-gray-300 sm:text-base">{section.summary}</p>
+
+      {isOpen ? (
+        <div id={`guide-panel-${section.id}`} className="mt-4 grid gap-3 sm:grid-cols-3">
+          {section.steps.map((step, index) => (
+            <div key={step} className="rounded-2xl border border-white/10 bg-[#141926] p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">
+                Step {index + 1}
+              </p>
+              <p className="mt-1 text-sm text-gray-200">{step}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 export default function UserGuidePage() {
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [expandedSectionIds, setExpandedSectionIds] = useState<string[]>(["dashboard"]);
+
+  useEffect(() => {
+    async function fetchAdminStatus() {
+      try {
+        const res = await fetch("/api/admin/me", { cache: "no-store" });
+        if (!res.ok) {
+          setIsAdmin(false);
+          return;
+        }
+
+        const data = await res.json();
+        setIsAdmin(Boolean(data?.isAdmin));
+      } catch {
+        setIsAdmin(false);
+      }
+    }
+
+    fetchAdminStatus();
+  }, []);
+
+  const visibleSections = sections.filter((section) => !section.adminOnly || isAdmin);
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSectionIds((prev) =>
+      prev.includes(sectionId)
+        ? prev.filter((id) => id !== sectionId)
+        : [...prev, sectionId]
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
       <TopNav activePage="user-guide" />
@@ -73,254 +197,58 @@ export default function UserGuidePage() {
             User Guide
           </p>
           <h1 className="mt-4 text-3xl font-semibold leading-tight sm:text-4xl">
-            How Auto Trading Works in Luckmi
+            Navigate Luckmi Without Feeling Overwhelmed
           </h1>
-          <p className="mt-4 max-w-3xl text-sm text-gray-300 sm:text-base">
-            This guide explains the full flow: add stocks, run the run Trade cycle, review AI decisions,
-            and connect Alpaca so executions can run through your broker account.
+          <p className="mt-3 max-w-3xl text-sm text-gray-300 sm:text-base">
+            Follow one simple path: Dashboard to Watchlist to Portfolio or Auto Trading, then review outcomes in Reports.
+            Use Picks when you need fresh ideas.
           </p>
 
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/auto"
-              className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/20"
-            >
-              Open Auto Trading
-            </Link>
-            <Link
-              href="/alpaca"
-              className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/20"
-            >
-              Open Alpaca Setup
-            </Link>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
+              <p className="text-xs uppercase tracking-wide text-cyan-300">Start Here</p>
+              <p className="mt-1 text-sm text-gray-200">Open Dashboard and check alerts and account pulse.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
+              <p className="text-xs uppercase tracking-wide text-cyan-300">Work Flow</p>
+              <p className="mt-1 text-sm text-gray-200">Research in Watchlist, manage risk in Portfolio or Auto Trading.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
+              <p className="text-xs uppercase tracking-wide text-cyan-300">Improve Loop</p>
+              <p className="mt-1 text-sm text-gray-200">Use Reports weekly and change one behavior at a time.</p>
+            </div>
           </div>
         </section>
 
-        <section className="mt-6 rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
-          <h2 className="text-2xl font-semibold">How to Read Reports (All Tabs)</h2>
-          <p className="mt-2 text-sm text-gray-300">
-            Use this as a practical playbook. Start with pulse metrics, then review context, then take one concrete action.
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Link
-              href="/reports"
-              className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/20"
-            >
-              Open User Reports
-            </Link>
-            <Link
-              href="/admin/reports"
-              className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 transition hover:bg-amber-500/20"
-            >
-              Open Admin Reports
-            </Link>
-          </div>
-
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold text-white">User Report Tabs</h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <ReportTabCard
-                audience="User"
-                tab="Overview"
-                purpose="Quick health check of your decision quality and outcomes."
-                whatToWatch="AI Decisions, Avg Confidence, Avg CTS, Realized P&L, and AI Interpretation narrative."
-                action="If confidence and CTS are both weak, reduce trade frequency and prioritize stronger setups only."
-              />
-              <ReportTabCard
-                audience="User"
-                tab="Risk"
-                purpose="Control concentration and open-position exposure before adding risk."
-                whatToWatch="Top symbol share, open winners vs losers, diversification score, and Risk Alerts."
-                action="If top symbol share is elevated, rebalance by reducing concentration and avoid stacking one ticker."
-              />
-              <ReportTabCard
-                audience="User"
-                tab="Coach"
-                purpose="Receive plain-English review of strengths, risks, and behavior patterns."
-                whatToWatch="Strengths, Risks, Symbol Insights, and Watch Next list from Luckmi AI Trading Review."
-                action="Take one recommendation for the next week and track if win rate and risk alerts improve."
-              />
-              <ReportTabCard
-                audience="User"
-                tab="Advanced"
-                purpose="Deeper diagnostics for symbol-level performance and behavior drift."
-                whatToWatch="Symbol Scoreboard, AI Performance Coach scenarios, and Adaptive Alerts."
-                action="Use scenario output to tighten thresholds, then compare the next report window before changing again."
-              />
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold text-white">Admin Report Tabs</h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <ReportTabCard
-                audience="Admin"
-                tab="Executive"
-                purpose="CEO-level snapshot of platform health and AI quality."
-                whatToWatch="Total users, users in profit/loss, realized P&L, engine reliability, and system review recommendations."
-                action="Prioritize one platform-level change from Top Actions and reassess in the next report window."
-              />
-              <ReportTabCard
-                audience="Admin"
-                tab="Risk"
-                purpose="Find concentration and user exposure risks across the platform."
-                whatToWatch="Symbol concentration donut, user exposure donut, top loss symbols, and active risk alerts."
-                action="Set limits when concentration exceeds thresholds and monitor whether alerts reduce over time."
-              />
-              <ReportTabCard
-                audience="Admin"
-                tab="Execution"
-                purpose="Verify order pipeline and engine run reliability."
-                whatToWatch="Execution funnel, fill/reject/cancel rates, failed and blocked runs, low-confidence sells."
-                action="Fix reliability and rejection causes before making strategy changes."
-              />
-              <ReportTabCard
-                audience="Admin"
-                tab="Strategy"
-                purpose="Understand where edge exists by signal quality and decision mix."
-                whatToWatch="CTS buckets, decision mix, hold-to-sell ratio, and AI edge analysis notes."
-                action="Increase weight on profitable CTS bands and reduce entries in weak-performing bands."
-              />
-              <ReportTabCard
-                audience="Admin"
-                tab="Users"
-                purpose="Inspect account-level outcomes and engagement quality."
-                whatToWatch="Top accounts by sort metric, open positions, net P&L, confidence, and engine success."
-                action="Use this tab to target coaching, risk controls, and support for underperforming cohorts."
-              />
-            </div>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-            Recommended flow: 1) Pulse metrics, 2) Detailed tab diagnostics, 3) One action per cycle, 4) Compare after 7d or 30d.
+        <section className="mt-6 rounded-3xl border border-white/10 bg-[#11151c] p-5 sm:p-6">
+          <p className="text-xs uppercase tracking-wide text-gray-400">Quick Navigation</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {visibleSections.map((section) => (
+              <a
+                key={section.id}
+                href={`#${section.id}`}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-gray-200 transition hover:bg-white/10"
+              >
+                {section.title}
+              </a>
+            ))}
           </div>
         </section>
 
-        <section className="mt-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-white/10 bg-[#11151c] p-5">
-            <h2 className="text-lg font-semibold">1. Add Auto Stocks</h2>
-            <p className="mt-2 text-sm text-gray-300">
-              In Auto Trading, add symbols and assign allocation. The engine tracks only stocks in
-              active statuses: idle, monitoring, or in-position.
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-[#11151c] p-5">
-            <h2 className="text-lg font-semibold">2. Run Cycle</h2>
-            <p className="mt-2 text-sm text-gray-300">
-              A cycle fetches fresh quotes, evaluates buy and sell conditions, and updates each
-              stock with AI action, reason, confidence, and CTS context.
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-[#11151c] p-5">
-            <h2 className="text-lg font-semibold">3. Persist + Execute</h2>
-            <p className="mt-2 text-sm text-gray-300">
-              Hold and non-trade state updates are saved. If trades are generated and broker mode
-              is enabled, orders are sent through Alpaca and then state is reconciled.
-            </p>
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
-          <h2 className="text-2xl font-semibold">How the Auto Trading Engine Decides</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-emerald-300">Buy Side</h3>
-              <p className="mt-2 text-sm text-gray-300">
-                For symbols not currently in position, the engine scores trend and setup quality.
-                If the signal qualifies, it computes size and opens or adds to position.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-rose-300">Sell Side</h3>
-              <p className="mt-2 text-sm text-gray-300">
-                For open positions, the engine checks risk and momentum. It can fully exit, partial
-                sell, buy more on strong continuation, or hold with updated reasoning.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">
-            Notes: Hold decisions are saved daily so you can review why the engine stayed patient
-            without flooding the history table every cycle.
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
-          <h2 className="text-2xl font-semibold">Connect Alpaca Keys</h2>
-          <p className="mt-2 text-sm text-gray-300">
-            Use paper trading first. Make sure you generate keys from your Alpaca paper account,
-            not live, unless you intentionally want live execution and it is enabled on platform.
-          </p>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <Step
-              number={1}
-              title="Create or open your Alpaca account"
-              body="Sign in at Alpaca and switch to Paper environment."
+        <div className="mt-6 space-y-5">
+          {visibleSections.map((section) => (
+            <SectionCard
+              key={section.id}
+              section={section}
+              isOpen={expandedSectionIds.includes(section.id)}
+              onToggle={() => toggleSection(section.id)}
             />
-            <Step
-              number={2}
-              title="Generate API Key + Secret"
-              body="In Alpaca dashboard, create API credentials and copy both values once."
-            />
-            <Step
-              number={3}
-              title="Open Luckmi Alpaca page"
-              body="Go to the Alpaca screen in this app and paste key and secret."
-            />
-            <Step
-              number={4}
-              title="Save and test connection"
-              body="Use Test Connection. You should see connected status and paper mode."
-            />
-            <Step
-              number={5}
-              title="Run one manual cycle"
-              body="Run cycle from Auto Trading and verify decisions and trades update correctly."
-            />
-            <Step
-              number={6}
-              title="Monitor broker sync"
-              body="Keep checking broker status and order reconciliation before larger allocations."
-            />
-          </div>
-        </section>
+          ))}
+        </div>
 
-        <section className="mt-6 mb-10 rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
-          <h2 className="text-2xl font-semibold">Quick Troubleshooting</h2>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-white">No trades executed</h3>
-              <p className="mt-1 text-sm text-gray-300">
-                This can be normal. If conditions do not pass thresholds, the engine records Hold
-                with reason and confidence.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-white">Broker blocked</h3>
-              <p className="mt-1 text-sm text-gray-300">
-                Check Alpaca connection status and broker mode flags. Hold-only cycles still save,
-                but trade execution requires broker availability.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-white">Manual cycle blocked</h3>
-              <p className="mt-1 text-sm text-gray-300">
-                Manual cooldown may still be active. Wait for cooldown timer and rerun.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-[#141926] p-4">
-              <h3 className="text-sm font-semibold text-white">No auto positions in portfolio</h3>
-              <p className="mt-1 text-sm text-gray-300">
-                Auto portfolio tab shows actual open positions only. Monitoring stocks appear in
-                Auto Trading, not in positions list.
-              </p>
-            </div>
-          </div>
+        <section className="mt-6 mb-10 rounded-3xl border border-amber-400/20 bg-amber-400/10 p-6 text-sm text-amber-100">
+          Recommended rhythm: check Dashboard daily, update Watchlist and Portfolio during market hours,
+          run Auto Trading intentionally, then review Reports every week.
         </section>
       </main>
     </div>
