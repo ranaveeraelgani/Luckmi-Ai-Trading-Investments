@@ -267,6 +267,7 @@ export default function AutoTradingPage() {
   const [activeFilter, setActiveFilter] = useState<StockFilter>("all");
   const [activeSort, setActiveSort] = useState<StockSort>("allocation");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [expandedTradeKeys, setExpandedTradeKeys] = useState<Record<string, boolean>>({});
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
 
   async function refreshDashboardData() {
@@ -547,6 +548,10 @@ export default function AutoTradingPage() {
       setIsDetailSheetOpen(false);
     }
   }, [autoStocks, selectedStockId]);
+
+  useEffect(() => {
+    setExpandedTradeKeys({});
+  }, [selectedStockId]);
 
   useEffect(() => {
     if (!isDetailSheetOpen) return;
@@ -1092,32 +1097,88 @@ export default function AutoTradingPage() {
                         No filled trade history for {selectedStock.symbol} yet.
                       </div>
                     ) : (
-                      <div className="divide-y divide-white/5 rounded-3xl border border-white/5 bg-[#0F1117]">
-                        {selectedStockTrades.map((trade, index) => (
-                          <div key={trade.id || index} className="p-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <div className="font-medium text-white">
-                                  {normalizeTradeType(trade.type)} · {trade.shares ?? 0} shares
+                      <div className="space-y-3">
+                        {selectedStockTrades.map((trade, index) => {
+                          const tradeKey = trade.id || `${selectedStock.symbol}-${index}-${trade.created_at || "trade"}`;
+                          const isExpanded = Boolean(expandedTradeKeys[tradeKey]);
+                          const confidence = Number(trade.confidence);
+                          const hasConfidence = Number.isFinite(confidence);
+
+                          return (
+                            <div key={tradeKey} className="rounded-3xl border border-white/5 bg-[#0F1117] p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-medium text-white">
+                                    {normalizeTradeType(trade.type)} · {trade.shares ?? 0} shares
+                                  </div>
+                                  <div className="mt-1 text-xs text-gray-500">{formatDate(trade.created_at)}</div>
                                 </div>
-                                <div className="mt-1 text-xs text-gray-500">{formatDate(trade.created_at)}</div>
-                                {trade.reason ? (
-                                  <div className="mt-2 text-sm text-gray-400">{trade.reason}</div>
-                                ) : null}
+
+                                <div className="text-right">
+                                  <div className="font-mono text-sm text-white">{formatMoney(trade.price)}</div>
+                                  {trade.pnl !== null && trade.pnl !== undefined ? (
+                                    <div className={`mt-1 font-mono text-sm ${pnlClass(toNumber(trade.pnl))}`}>
+                                      {toNumber(trade.pnl) >= 0 ? "+" : ""}
+                                      {formatMoney(trade.pnl)}
+                                    </div>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedTradeKeys((prev) => ({
+                                        ...prev,
+                                        [tradeKey]: !prev[tradeKey],
+                                      }))
+                                    }
+                                    className="mt-2 rounded-xl border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-gray-300 transition hover:bg-white/10"
+                                    aria-expanded={isExpanded}
+                                    aria-controls={`trade-ai-${tradeKey}`}
+                                  >
+                                    {isExpanded ? "Hide AI Decision" : "Show AI Decision"}
+                                  </button>
+                                </div>
                               </div>
 
-                              <div className="text-right">
-                                <div className="font-mono text-sm text-white">{formatMoney(trade.price)}</div>
-                                {trade.pnl !== null && trade.pnl !== undefined ? (
-                                  <div className={`mt-1 font-mono text-sm ${pnlClass(toNumber(trade.pnl))}`}>
-                                    {toNumber(trade.pnl) >= 0 ? "+" : ""}
-                                    {formatMoney(trade.pnl)}
+                              {isExpanded ? (
+                                <div
+                                  id={`trade-ai-${tradeKey}`}
+                                  className="mt-3 rounded-3xl border border-[#F5C76E]/20 bg-gradient-to-b from-[#F5C76E]/[0.06] to-[#F5C76E]/[0.02] p-4 shadow-[0_0_30px_rgba(245,199,110,0.05)]"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2.5">
+                                      <LuckmiAiIcon size={28} />
+                                      <div>
+                                        <div className="text-sm font-bold tracking-tight text-white">AI Decision</div>
+                                        <div className="text-[10px] text-gray-400">{normalizeTradeType(trade.type)} · {formatDate(trade.created_at)}</div>
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {hasConfidence ? (
+                                        <Pill className="border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]">
+                                          {Math.round(confidence)}% conf
+                                        </Pill>
+                                      ) : null}
+                                      {trade.cts_score !== null && trade.cts_score !== undefined ? (
+                                        <Pill className={scorePillClass(trade.cts_score)}>CTS {trade.cts_score}</Pill>
+                                      ) : null}
+                                      {trade.sell_score !== null && trade.sell_score !== undefined ? (
+                                        <Pill className="border-red-500/30 bg-red-500/10 text-red-300">
+                                          Sell {trade.sell_score}
+                                        </Pill>
+                                      ) : null}
+                                    </div>
                                   </div>
-                                ) : null}
-                              </div>
+                                  <div className="relative mt-3">
+                                    <div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-white/5 bg-[#0A0E14] p-3 pr-4 text-sm leading-7 text-gray-200 shadow-inner">
+                                      {trade.reason || "No AI reasoning text was saved for this trade."}
+                                    </div>
+                                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-2xl bg-gradient-to-t from-[#0A0E14] to-transparent" />
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )
                   ) : null}
