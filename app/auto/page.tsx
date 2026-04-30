@@ -115,9 +115,31 @@ function formatPercent(value?: number | string | null) {
   return `${sign}${num.toFixed(2)}%`;
 }
 
+function parseRunTimestamp(value?: string | number | null): number | null {
+  if (value === undefined || value === null) return null;
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return null;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function formatDate(value?: string | null) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString();
+  const timestamp = parseRunTimestamp(value);
+  if (timestamp === null) return "—";
+  return new Date(timestamp).toLocaleString();
 }
 
 function pnlClass(value: number) {
@@ -563,10 +585,8 @@ export default function AutoTradingPage() {
     confirmAction?.kind === "sell" ? "Sell Position" : "Remove Stock";
 
   function getNextRunCountdown(lastRunAt?: string | null): string {
-    if (!lastRunAt) return "--:--";
-
-    const lastRunMs = new Date(lastRunAt).getTime();
-    if (!Number.isFinite(lastRunMs)) return "--:--";
+    const lastRunMs = parseRunTimestamp(lastRunAt);
+    if (lastRunMs === null) return "--:--";
 
     const nextRunMs = lastRunMs + 20 * 60 * 1000;
     const remainingMs = nextRunMs - countdownNowMs;
