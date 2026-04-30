@@ -245,6 +245,7 @@ export default function AutoTradingPage() {
   const [activeFilter, setActiveFilter] = useState<StockFilter>("all");
   const [activeSort, setActiveSort] = useState<StockSort>("allocation");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
 
   async function refreshDashboardData() {
     await Promise.all([fetchAutoStocks(), fetchLastRun(), fetchTrades()]);
@@ -269,6 +270,14 @@ export default function AutoTradingPage() {
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", refreshIfVisible);
     };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCountdownNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
   }, []);
 
   async function fetchAutoStocks() {
@@ -553,6 +562,22 @@ export default function AutoTradingPage() {
   const confirmActionLabel =
     confirmAction?.kind === "sell" ? "Sell Position" : "Remove Stock";
 
+  function getNextRunCountdown(lastRunAt?: string | null): string {
+    if (!lastRunAt) return "--:--";
+
+    const lastRunMs = new Date(lastRunAt).getTime();
+    if (!Number.isFinite(lastRunMs)) return "--:--";
+
+    const nextRunMs = lastRunMs + 20 * 60 * 1000;
+    const remainingMs = nextRunMs - countdownNowMs;
+
+    if (remainingMs <= 0) return "Ready now";
+
+    const minutes = Math.floor(remainingMs / 60000);
+    const seconds = Math.floor((remainingMs % 60000) / 1000);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
   async function runConfirmAction() {
     if (!confirmAction) return;
 
@@ -655,7 +680,9 @@ export default function AutoTradingPage() {
                   aria-expanded={!engineCollapsed}
                 >
                   <h2 className="text-lg font-semibold text-white">Engine Control</h2>
-                  <div className="mt-1 text-xs text-gray-500">Last run: {formatDate(lastRun?.created_at)}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Last run: {formatDate(lastRun?.created_at)} • Next run: {getNextRunCountdown(lastRun?.created_at)}
+                  </div>
                   {engineCollapsed ? (
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <Pill className={statusClass(lastRun?.status)}>{lastRun?.status || "never"}</Pill>

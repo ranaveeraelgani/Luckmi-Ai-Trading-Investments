@@ -172,6 +172,7 @@ export default function ChatPage() {
   const [brokerStatus, setBrokerStatus] = useState<any>(null);
   const [brokerStatusLoading, setBrokerStatusLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
   // toggle for trade history details in auto tab
   const toggleStock = (symbol: string) => {
     setOpenStocks(prev => ({
@@ -571,6 +572,14 @@ export default function ChatPage() {
   // Check admin status on mount
   useEffect(() => {
     fetchAdminStatus();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCountdownNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -1123,6 +1132,24 @@ useEffect(() => {
     }
 
     return true;
+  };
+
+  const getNextRunCountdown = (lastRunAt?: string | null): string => {
+    if (!lastRunAt) return '--:--';
+
+    const lastRunMs = new Date(lastRunAt).getTime();
+    if (!Number.isFinite(lastRunMs)) return '--:--';
+
+    const nextRunMs = lastRunMs + 20 * 60 * 1000;
+    const remainingMs = nextRunMs - countdownNowMs;
+
+    if (remainingMs <= 0) {
+      return 'Ready now';
+    }
+
+    const minutes = Math.floor(remainingMs / 60000);
+    const seconds = Math.floor((remainingMs % 60000) / 1000);
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
   // Add log entry
   const addToAutoLog = (message: string) => {
@@ -1739,6 +1766,7 @@ useEffect(() => {
                         {lastRun ? (
                           <>
                             Last run: {new Date(lastRun.created_at).toLocaleTimeString()} •{' '}
+                            Next run: {getNextRunCountdown(lastRun.created_at)} •{' '}
                             <span
                               className={
                                 lastRun.status === 'success'

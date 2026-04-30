@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 export default function SyncAlpacaButton({
   onSynced,
@@ -11,6 +12,10 @@ export default function SyncAlpacaButton({
   const [message, setMessage] = useState<string | null>(null);
 
   async function handleSync() {
+    const processingToastId = toast.loading(
+      "Refreshing broker positions. System is syncing with Alpaca, please wait..."
+    );
+
     try {
       setLoading(true);
       setMessage(null);
@@ -27,8 +32,10 @@ export default function SyncAlpacaButton({
 
       setMessage("Positions refreshed");
       await onSynced?.();
+      toast.success("Positions refreshed successfully.", { id: processingToastId });
     } catch (err: any) {
       setMessage(err?.message || "Sync failed");
+      toast.error(err?.message || "Sync failed", { id: processingToastId });
     } finally {
       setLoading(false);
     }

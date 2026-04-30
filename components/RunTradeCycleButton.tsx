@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 function subscriptionsEnforced(): boolean {
   return String(process.env.NEXT_PUBLIC_SUBSCRIPTIONS_ENFORCED).toLowerCase() === "true";
@@ -87,6 +88,10 @@ export default function RunTradeCycleButton({
       return;
     }
 
+    const processingToastId = toast.loading(
+      "Running trade cycle. Luckmi AI is evaluating and processing your stocks, please wait..."
+    );
+
     try {
       setIsAiThinking(true);
       setCooldownStarted(false);
@@ -123,16 +128,20 @@ export default function RunTradeCycleButton({
         addToAutoLog(
           `Manual cycle completed • ${processed} stocks processed • ${tradesExecuted} trades executed`
         );
+        toast.success("Trade cycle completed.", { id: processingToastId });
       } else if (status === "blocked") {
         addToAutoLog(
           `Manual cycle blocked${message ? ` • ${message}` : ""}`
         );
+        toast(message || "Trade cycle blocked.", { id: processingToastId });
       } else {
         addToAutoLog("Manual cycle finished");
+        toast.success("Trade cycle finished.", { id: processingToastId });
       }
     } catch (err: any) {
       console.error("Manual cycle failed:", err);
       addToAutoLog(err?.message || "Manual cycle failed");
+      toast.error(err?.message || "Manual cycle failed", { id: processingToastId });
     } finally {
       setIsAiThinking(false);
     }
