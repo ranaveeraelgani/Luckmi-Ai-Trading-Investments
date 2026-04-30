@@ -150,6 +150,8 @@ async function saveEngineResults({
         {
           user_id: userId,
           auto_stock_id: stock.id,
+          symbol: stock.symbol,
+          status: "in-position",
           entry_price: stock.currentPosition.entryPrice,
           shares: stock.currentPosition.shares,
           peak_price: stock.currentPosition.peakPrice ?? stock.currentPosition.entryPrice,
@@ -164,12 +166,19 @@ async function saveEngineResults({
           onConflict: "auto_stock_id",
         }
       );
-    } else {
+    } else if (String(stock.status || "").toLowerCase() !== "in-position") {
       await supabase
         .from("positions")
         .delete()
         .eq("user_id", userId)
         .eq("auto_stock_id", stock.id);
+    } else {
+      // Safety: never delete when stock is still marked in-position.
+      // This protects against transient/missing currentPosition in memory.
+      console.warn(
+        "[engine] skip position delete because stock is still in-position",
+        { userId, autoStockId: stock.id, symbol: stock.symbol }
+      );
     }
 
     await persistAiDecisionDailyAware({ supabase, userId, stock });
@@ -368,7 +377,53 @@ export async function runTradeCycleForUser({
       };
     }
 
-    const eligibleStocks = stocks.filter((stock: any) => {
+    const stockIds = stocks.map((s: any) => s.id).filter(Boolean);
+    let positionByStockId = new Map<
+      string,
+      {
+        entry_price: number | null;
+        shares: number | null;
+        entry_time: string | null;
+        peak_price: number | null;
+        peak_pnl_percent: number | null;
+      }
+    >();
+
+    if (stockIds.length > 0) {
+      const { data: positions, error: positionsError } = await supabase
+        .from("positions")
+        .select("auto_stock_id, entry_price, shares, entry_time, peak_price, peak_pnl_percent")
+        .eq("user_id", userId)
+        .in("auto_stock_id", stockIds);
+
+      if (positionsError) {
+        throw positionsError;
+      }
+
+      positionByStockId = new Map(
+        (positions || [])
+          .filter((p: any) => p?.auto_stock_id)
+          .map((p: any) => [String(p.auto_stock_id), p])
+      );
+    }
+
+    const hydratedStocks = stocks.map((stock: any) => {
+      const position = positionByStockId.get(String(stock.id));
+      return {
+        ...stock,
+        currentPosition: position
+          ? {
+              entryPrice: Number(position.entry_price) || 0,
+              shares: Number(position.shares) || 0,
+              entryTime: position.entry_time || new Date().toISOString(),
+              peakPrice: Number(position.peak_price) || Number(position.entry_price) || 0,
+              peakPnLPercent: Number(position.peak_pnl_percent) || 0,
+            }
+          : null,
+      };
+    });
+
+    const eligibleStocks = hydratedStocks.filter((stock: any) => {
       if (!stock.rinse_repeat) return true;
       return (stock.repeat_counter || 0) < (stock.max_repeats || 0);
     });
