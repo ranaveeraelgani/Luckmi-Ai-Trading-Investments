@@ -7,7 +7,8 @@ import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 export const evaluateSellDecision = async (
   symbol: string,
   currentPosition: any,
-  currentPriceStock: number
+  currentPriceStock: number,
+  preloadedIndicatorData?: any
 ) => {
   try {
     if (currentPriceStock <= 0) {
@@ -24,7 +25,11 @@ export const evaluateSellDecision = async (
         currentPosition.entryPrice) *
       100;
 
-    const indicatorData = await getCtsForSymbol(symbol);
+    const indicatorData = preloadedIndicatorData ?? await getCtsForSymbol(symbol);
+
+    if (indicatorData.failed) {
+      return { shouldSell: false, reason: 'Indicator data unavailable — skipping evaluation' };
+    }
 
     const ctsScore = Number(indicatorData.ctsScore || 55);
     const dailyCTS = Number(indicatorData.dailyCTS || ctsScore);

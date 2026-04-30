@@ -2,6 +2,7 @@ import { evaluateStockForBuy } from '@/app/lib/evaluateAi/evaluateBuy/evaluateSt
 import { evaluateSellDecision } from '@/app/lib/evaluateAi/evaluateSell/evaluateSellDecision';
 import { getSmartPositionSize } from '@/app/lib/evaluateAi/evaluateHelpers/getSmartPositionSize';
 import { getSellSizePercent } from '@/app/lib/evaluateAi/evaluateHelpers/getSellSizePercent';
+import { getCtsForSymbol } from '@/app/lib/evaluateAi/evaluateHelpers/getCtsForSymbol';
 import { getQuotes } from '@/app/lib/quotes/quotes';
 // Safe number parsing with fallback
 const safeNumber = (val: any, fallback = 0) => {
@@ -80,10 +81,13 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 now - new Date(stock.currentPosition.entryTime).getTime() < MIN_HOLD;
 
             // 🔴 SELL
+            // Fetch CTS data once — reused for both sell and buy-more evaluation
+            const sharedIndicatorData = await getCtsForSymbol(stock.symbol);
             const sellDecision = await evaluateSellDecision(
                 stock.symbol,
                 stock.currentPosition,
-                currentPrice
+                currentPrice,
+                sharedIndicatorData
             );
             let didAction = false;
             let shouldSell = sellDecision?.shouldSell;
@@ -181,7 +185,8 @@ export async function runTradingEngine(stocks: any[], quotes: any) {
                 const buyResult = await evaluateStockForBuy(
                     stock.symbol,
                     updatedStocks,
-                    currentPrice
+                    currentPrice,
+                    sharedIndicatorData
                 );
 
                 if (buyResult?.shouldBuy && buyResult.entryPrice) {

@@ -16,6 +16,7 @@ export const getMomentumState = (macdArr: number[], signalArr: number[]) => {
 
   if (m1 < 0 && slope < 0 && slope < prevSlope) return "accelerating_down";
   if (m1 < 0 && slope < 0 && slope > prevSlope) return "slowing_down";
+  if (m1 < 0 && slope > 0) return "recovering";
 
   return "neutral";
 };

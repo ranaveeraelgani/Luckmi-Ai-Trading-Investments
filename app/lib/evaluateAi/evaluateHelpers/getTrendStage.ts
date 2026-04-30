@@ -1,6 +1,8 @@
 export const getTrendStage = (closes: number[], ema200: number) => {
   const recent = closes.slice(-10);
 
+  if (recent.length < 10) return 'neutral';
+
   const aboveEMA = closes[closes.length - 1] > ema200;
 
   const higherHighs =

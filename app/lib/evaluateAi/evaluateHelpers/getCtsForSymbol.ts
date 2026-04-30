@@ -47,6 +47,7 @@ export const getCtsForSymbol = async (symbol: string) => {
 
     if (!intradayData.c || intradayData.c.length < 30) {
       return {
+        failed: true,
         ctsScore: 55,
         dailyCTS: 55,
         intradayCTS: 55,
@@ -91,6 +92,7 @@ export const getCtsForSymbol = async (symbol: string) => {
 
     if (!dailyData.c || dailyData.c.length < 40) {
       return {
+        failed: true,
         ctsScore: 55,
         dailyCTS: 55,
         intradayCTS: 55,
@@ -229,6 +231,7 @@ export const getCtsForSymbol = async (symbol: string) => {
   } catch (err) {
     console.error(`Failed to calculate indicators for ${symbol}`, err);
     return {
+      failed: true,
       ctsScore: 55,
       dailyCTS: 55,
       intradayCTS: 55,

@@ -9,7 +9,8 @@ import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 export const evaluateStockForBuy = async (
   symbol: string,
   autoStocks: any[],
-  currentPrice: number
+  currentPrice: number,
+  preloadedIndicatorData?: any
 ) => {
   try {
     if (currentPrice <= 0) {
@@ -34,7 +35,11 @@ export const evaluateStockForBuy = async (
     // =========================
     // 1. LOAD NEW COMBINED CTS
     // =========================
-    const indicatorData = await getCtsForSymbol(symbol);
+    const indicatorData = preloadedIndicatorData ?? await getCtsForSymbol(symbol);
+
+    if (indicatorData.failed) {
+      return { shouldBuy: false, reason: 'Indicator data unavailable — skipping evaluation' };
+    }
 
     const ctsScore = Number(indicatorData.ctsScore || 55);
     const dailyCTS = Number(indicatorData.dailyCTS || ctsScore);
@@ -218,6 +223,7 @@ Decide now.`;
     if (momentumState === 'accelerating_up') buyScore += 12;
     if (momentumState === 'slowing_up') buyScore -= 6;
     if (momentumState === 'rolling_over') buyScore -= 18;
+    if (momentumState === 'slowing_down') buyScore -= 10;
 
     // Trend stage
     if (trendStage === 'early_trend') buyScore += 10;
