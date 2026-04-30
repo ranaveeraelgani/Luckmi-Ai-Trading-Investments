@@ -1302,9 +1302,14 @@ useEffect(() => {
             </div>
 
             {isAdmin && (
-              <a href="/admin/users" className="hover:text-amber-400 transition-colors">
-                Admin
-              </a>
+              <>
+                <a href="/admin/reports" className="hover:text-amber-400 transition-colors">
+                  Admin Reports
+                </a>
+                <a href="/admin/users" className="hover:text-amber-400 transition-colors">
+                  Admin Users
+                </a>
+              </>
             )}
 
             <a
@@ -3610,9 +3615,14 @@ useEffect(() => {
                   )}
                 </div>
                 {isAdmin && (
-                  <a href="/admin/users" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
-                    Admin
-                  </a>
+                  <>
+                    <a href="/admin/reports" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
+                      Admin Reports
+                    </a>
+                    <a href="/admin/users" className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl text-amber-400 hover:text-amber-300">
+                      Admin Users
+                    </a>
+                  </>
                 )}
                 <a href="#" onClick={() => setShowGuideModal(true)} className="block py-4 px-5 hover:bg-[#1a1f2e] rounded-2xl">
                   Testing Guide

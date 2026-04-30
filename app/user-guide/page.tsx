@@ -23,6 +23,45 @@ function Step({
   );
 }
 
+function ReportTabCard({
+  audience,
+  tab,
+  purpose,
+  whatToWatch,
+  action,
+}: {
+  audience: "User" | "Admin";
+  tab: string;
+  purpose: string;
+  whatToWatch: string;
+  action: string;
+}) {
+  const tone =
+    audience === "User"
+      ? "border-blue-500/20 bg-blue-500/10 text-blue-100"
+      : "border-amber-500/20 bg-amber-500/10 text-amber-100";
+
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white">{tab}</h3>
+        <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-300">
+          {audience}
+        </span>
+      </div>
+      <p className="text-sm text-gray-200">
+        <span className="font-semibold">Purpose:</span> {purpose}
+      </p>
+      <p className="mt-2 text-sm text-gray-200">
+        <span className="font-semibold">What to watch:</span> {whatToWatch}
+      </p>
+      <p className="mt-2 text-sm text-gray-200">
+        <span className="font-semibold">Action:</span> {action}
+      </p>
+    </div>
+  );
+}
+
 export default function UserGuidePage() {
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
@@ -54,6 +93,107 @@ export default function UserGuidePage() {
             >
               Open Alpaca Setup
             </Link>
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-3xl border border-white/10 bg-[#11151c] p-6 sm:p-8">
+          <h2 className="text-2xl font-semibold">How to Read Reports (All Tabs)</h2>
+          <p className="mt-2 text-sm text-gray-300">
+            Use this as a practical playbook. Start with pulse metrics, then review context, then take one concrete action.
+          </p>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link
+              href="/reports"
+              className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/20"
+            >
+              Open User Reports
+            </Link>
+            <Link
+              href="/admin/reports"
+              className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 transition hover:bg-amber-500/20"
+            >
+              Open Admin Reports
+            </Link>
+          </div>
+
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-white">User Report Tabs</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <ReportTabCard
+                audience="User"
+                tab="Overview"
+                purpose="Quick health check of your decision quality and outcomes."
+                whatToWatch="AI Decisions, Avg Confidence, Avg CTS, Realized P&L, and AI Interpretation narrative."
+                action="If confidence and CTS are both weak, reduce trade frequency and prioritize stronger setups only."
+              />
+              <ReportTabCard
+                audience="User"
+                tab="Risk"
+                purpose="Control concentration and open-position exposure before adding risk."
+                whatToWatch="Top symbol share, open winners vs losers, diversification score, and Risk Alerts."
+                action="If top symbol share is elevated, rebalance by reducing concentration and avoid stacking one ticker."
+              />
+              <ReportTabCard
+                audience="User"
+                tab="Coach"
+                purpose="Receive plain-English review of strengths, risks, and behavior patterns."
+                whatToWatch="Strengths, Risks, Symbol Insights, and Watch Next list from Luckmi AI Trading Review."
+                action="Take one recommendation for the next week and track if win rate and risk alerts improve."
+              />
+              <ReportTabCard
+                audience="User"
+                tab="Advanced"
+                purpose="Deeper diagnostics for symbol-level performance and behavior drift."
+                whatToWatch="Symbol Scoreboard, AI Performance Coach scenarios, and Adaptive Alerts."
+                action="Use scenario output to tighten thresholds, then compare the next report window before changing again."
+              />
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-white">Admin Report Tabs</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <ReportTabCard
+                audience="Admin"
+                tab="Executive"
+                purpose="CEO-level snapshot of platform health and AI quality."
+                whatToWatch="Total users, users in profit/loss, realized P&L, engine reliability, and system review recommendations."
+                action="Prioritize one platform-level change from Top Actions and reassess in the next report window."
+              />
+              <ReportTabCard
+                audience="Admin"
+                tab="Risk"
+                purpose="Find concentration and user exposure risks across the platform."
+                whatToWatch="Symbol concentration donut, user exposure donut, top loss symbols, and active risk alerts."
+                action="Set limits when concentration exceeds thresholds and monitor whether alerts reduce over time."
+              />
+              <ReportTabCard
+                audience="Admin"
+                tab="Execution"
+                purpose="Verify order pipeline and engine run reliability."
+                whatToWatch="Execution funnel, fill/reject/cancel rates, failed and blocked runs, low-confidence sells."
+                action="Fix reliability and rejection causes before making strategy changes."
+              />
+              <ReportTabCard
+                audience="Admin"
+                tab="Strategy"
+                purpose="Understand where edge exists by signal quality and decision mix."
+                whatToWatch="CTS buckets, decision mix, hold-to-sell ratio, and AI edge analysis notes."
+                action="Increase weight on profitable CTS bands and reduce entries in weak-performing bands."
+              />
+              <ReportTabCard
+                audience="Admin"
+                tab="Users"
+                purpose="Inspect account-level outcomes and engagement quality."
+                whatToWatch="Top accounts by sort metric, open positions, net P&L, confidence, and engine success."
+                action="Use this tab to target coaching, risk controls, and support for underperforming cohorts."
+              />
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+            Recommended flow: 1) Pulse metrics, 2) Detailed tab diagnostics, 3) One action per cycle, 4) Compare after 7d or 30d.
           </div>
         </section>
 

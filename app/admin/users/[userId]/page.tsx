@@ -319,7 +319,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
 
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
-      <TopNav activePage="admin" />
+      <TopNav activePage="admin-users" />
 
       <div className="p-4 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-6">

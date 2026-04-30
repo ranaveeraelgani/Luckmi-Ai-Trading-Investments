@@ -15,7 +15,8 @@ type ActivePage =
   | "reports"
   | "profile"
   | "alpaca"
-  | "admin"
+  | "admin-reports"
+  | "admin-users"
   | "user-guide"
   | "notifications";
 
@@ -167,16 +168,28 @@ export default function TopNav({ activePage }: TopNavProps) {
             ))}
 
             {isAdmin && (
-              <Link
-                href="/admin/users"
-                className={`rounded-full px-3 py-2 text-sm font-medium transition ${
-                  activePage === "admin"
-                    ? "bg-amber-500/10 text-amber-300"
-                    : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
-                }`}
-              >
-                Admin
-              </Link>
+              <>
+                <Link
+                  href="/admin/reports"
+                  className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                    activePage === "admin-reports"
+                      ? "bg-amber-500/10 text-amber-300"
+                      : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
+                  }`}
+                >
+                  Admin Reports
+                </Link>
+                <Link
+                  href="/admin/users"
+                  className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                    activePage === "admin-users"
+                      ? "bg-amber-500/10 text-amber-300"
+                      : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
+                  }`}
+                >
+                  Admin Users
+                </Link>
+              </>
             )}
           </nav>
 
@@ -296,17 +309,30 @@ export default function TopNav({ activePage }: TopNavProps) {
                 ))}
 
                 {isAdmin && (
-                  <Link
-                    href="/admin/users"
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    className={`block rounded-2xl px-4 py-3 text-base font-medium transition ${
-                      activePage === "admin"
-                        ? "bg-amber-500/10 text-amber-300"
-                        : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
-                    }`}
-                  >
-                    Admin
-                  </Link>
+                  <>
+                    <Link
+                      href="/admin/reports"
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={`block rounded-2xl px-4 py-3 text-base font-medium transition ${
+                        activePage === "admin-reports"
+                          ? "bg-amber-500/10 text-amber-300"
+                          : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
+                      }`}
+                    >
+                      Admin Reports
+                    </Link>
+                    <Link
+                      href="/admin/users"
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={`block rounded-2xl px-4 py-3 text-base font-medium transition ${
+                        activePage === "admin-users"
+                          ? "bg-amber-500/10 text-amber-300"
+                          : "text-amber-300 hover:bg-white/5 hover:text-amber-200"
+                      }`}
+                    >
+                      Admin Users
+                    </Link>
+                  </>
                 )}
 
                 <div className="my-3 border-t border-white/5" />
