@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
+import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 
 export async function POST(req: Request) {
   try {
@@ -40,6 +41,34 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Max repeats must be 0 or greater" },
         { status: 400 }
+      );
+    }
+
+    const { data: brokerRow, error: brokerError } = await supabaseAdmin
+      .from("broker_keys")
+      .select("connection_status, last_tested_at")
+      .eq("user_id", user.id)
+      .eq("broker", "alpaca")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (brokerError) {
+      console.error("Error checking broker status:", brokerError);
+      return NextResponse.json(
+        { error: "Failed to validate broker connection" },
+        { status: 500 }
+      );
+    }
+
+    const brokerReady =
+      brokerRow?.connection_status === "connected" &&
+      Boolean(brokerRow?.last_tested_at);
+
+    if (!brokerReady) {
+      return NextResponse.json(
+        { error: "Connect Alpaca and run Test Connection before adding auto stocks" },
+        { status: 403 }
       );
     }
 

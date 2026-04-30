@@ -13,9 +13,13 @@ export async function GET() {
   }
 
   const entitlements = await getEntitlements(user.id);
+  const subscriptionEnabled =
+    process.env.SUBSCRIPTION_ENABLED === 'true' ||
+    process.env.NEXT_PUBLIC_SUBSCRIPTION_ENABLED === 'true';
 
   return Response.json({
     ...entitlements,
     enforced: subscriptionsEnforced(),
+    subscription_enabled: subscriptionEnabled,
   });
 }

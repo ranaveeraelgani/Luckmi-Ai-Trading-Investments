@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import TopNav from '@/components/TopNav';
+import Link from 'next/link';
 
 type AdminUser = {
     user_id: string;
@@ -202,10 +203,21 @@ export default function AdminPage() {
             <div className="p-6">
                 <div className="max-w-7xl mx-auto">
                     <div className="mb-6">
-                        <h1 className="text-2xl font-semibold">Admin</h1>
-                        <p className="text-sm text-gray-400 mt-1">
-                            Manage plans, engine safety, broker status, and internal notes.
-                        </p>
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                            <div>
+                                <h1 className="text-2xl font-semibold">Admin</h1>
+                                <p className="text-sm text-gray-400 mt-1">
+                                    Manage plans, engine safety, broker status, and internal notes.
+                                </p>
+                            </div>
+
+                            <Link
+                                href="/admin/reports"
+                                className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/20"
+                            >
+                                Open Admin Reports
+                            </Link>
+                        </div>
                     </div>
 
                     {loading ? (

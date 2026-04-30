@@ -13,6 +13,38 @@ export async function POST(req: Request) {
         }
 
         const entitlements = await getEntitlements(user.id);
+
+        const { data: brokerRow, error: brokerError } = await supabaseAdmin
+            .from('broker_keys')
+            .select('connection_status, last_tested_at')
+            .eq('user_id', user.id)
+            .eq('broker', 'alpaca')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (brokerError) {
+            console.error("BROKER CHECK ERROR:", brokerError);
+            return Response.json(
+                { success: false, message: "Failed to validate broker connection." },
+                { status: 500 }
+            );
+        }
+
+        const brokerReady =
+            brokerRow?.connection_status === 'connected' &&
+            Boolean(brokerRow?.last_tested_at);
+
+        if (!brokerReady) {
+            return Response.json(
+                {
+                    success: false,
+                    message: 'Connect Alpaca and run Test Connection before adding auto stocks.',
+                },
+                { status: 403 }
+            );
+        }
+
         const { count, error: countError } = await supabaseAdmin
             .from('auto_stocks')
             .select('*', { count: 'exact', head: true })
