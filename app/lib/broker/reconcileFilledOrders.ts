@@ -176,6 +176,35 @@ export async function reconcileFilledOrders(userId: string) {
         }
       }
 
+      // Look up the most recent AI decision for this stock to get the real reason
+      let aiReason: string | null = null;
+      let aiConfidence: number | null = null;
+      let aiCtsScore: number | null = null;
+      let aiSellScore: number | null = null;
+
+      if (order.auto_stock_id) {
+        const actionFilter = order.side === "buy"
+          ? ["Buy", "Buy More"]
+          : ["Sell", "Partial Sell"];
+
+        const { data: latestDecision } = await supabaseAdmin
+          .from("ai_decisions")
+          .select("reason, confidence, cts_score, sell_score")
+          .eq("user_id", userId)
+          .eq("auto_stock_id", order.auto_stock_id)
+          .in("action", actionFilter)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (latestDecision) {
+          aiReason = latestDecision.reason || null;
+          aiConfidence = latestDecision.confidence != null ? n(latestDecision.confidence) : null;
+          aiCtsScore = latestDecision.cts_score != null ? n(latestDecision.cts_score) : null;
+          aiSellScore = latestDecision.sell_score != null ? n(latestDecision.sell_score) : null;
+        }
+      }
+
       const { error: tradeError } = await supabaseAdmin.from("trades").insert({
         user_id: userId,
         auto_stock_id: order.auto_stock_id,
@@ -186,10 +215,10 @@ export async function reconcileFilledOrders(userId: string) {
         price,
         amount,
         pnl,
-        reason: "Broker-filled Alpaca order",
-        confidence: null,
-        cts_score: null,
-        sell_score: null,
+        reason: aiReason || "Broker-filled Alpaca order",
+        confidence: aiConfidence,
+        cts_score: aiCtsScore,
+        sell_score: aiSellScore,
         created_at: order.filled_at || new Date().toISOString(),
       });
 

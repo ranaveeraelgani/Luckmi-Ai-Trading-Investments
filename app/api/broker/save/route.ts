@@ -15,6 +15,27 @@ export async function POST(req: Request) {
       return new Response('Unauthorized', { status: 401 });
     }
 
+    const profileEmail = user.email || null;
+    const profileName =
+      (user.user_metadata?.full_name as string | undefined) ||
+      (user.user_metadata?.name as string | undefined) ||
+      profileEmail;
+
+    const { error: profileUpsertError } = await supabaseAdmin
+      .from('profiles')
+      .upsert(
+        {
+          user_id: user.id,
+          email: profileEmail,
+          full_name: profileName,
+        },
+        { onConflict: 'user_id' }
+      );
+
+    if (profileUpsertError) {
+      throw profileUpsertError;
+    }
+
     const entitlements = await getEntitlements(user.id);
 
     if (subscriptionsEnforced() && !entitlements.allowBrokerConnect) {
