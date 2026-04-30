@@ -287,6 +287,62 @@ function CtsBucketBar({
   );
 }
 
+function AdminTabHowTo({ tab }: { tab: AdminTab }) {
+  const byTab: Record<AdminTab, { purpose: string; watch: string; action: string }> = {
+    executive: {
+      purpose: "CEO-level snapshot of platform health, edge quality, and operating risk.",
+      watch: "Users in profit/loss, realized P&L, engine reliability, and AI system review recommendations.",
+      action: "Choose one top action for the next cycle and reassess in the next report window.",
+    },
+    risk: {
+      purpose: "Surface concentration and portfolio-exposure risks across all users.",
+      watch: "Symbol concentration, user exposure buckets, top loss symbols, and risk alerts.",
+      action: "Apply symbol and exposure controls when concentration or user-risk skew crosses thresholds.",
+    },
+    execution: {
+      purpose: "Validate execution quality and engine reliability before strategy changes.",
+      watch: "Order funnel fill/reject/cancel rates, failed or blocked runs, and low-confidence exits.",
+      action: "Fix execution bottlenecks first, then tune strategy once reliability is stable.",
+    },
+    strategy: {
+      purpose: "Understand where edge exists by signal quality and decision mix.",
+      watch: "CTS bucket win rates, avg P&L by band, hold-to-sell ratio, and AI edge notes.",
+      action: "Increase weight for profitable CTS bands and reduce activity in consistently weak bands.",
+    },
+    users: {
+      purpose: "Inspect user-level outcome distribution and operational quality.",
+      watch: "Top accounts by selected metric, open positions, confidence, net P&L, and engine success.",
+      action: "Use this tab for targeted interventions: coaching, guardrails, and account-level follow-up.",
+    },
+  };
+
+  const guide = byTab[tab];
+
+  return (
+    <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+      <details className="group" open={tab === "executive"}>
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-gray-200">
+          <div className="flex items-center justify-between">
+            <span>How to read this tab</span>
+            <span className="text-xs text-gray-500 transition group-open:rotate-180">⌄</span>
+          </div>
+        </summary>
+        <div className="border-t border-gray-800 px-5 py-4 text-sm text-gray-300">
+          <p>
+            <span className="font-semibold text-white">Purpose:</span> {guide.purpose}
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold text-white">What to watch:</span> {guide.watch}
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold text-white">Action:</span> {guide.action}
+          </p>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AdminReportsPage() {
@@ -488,7 +544,7 @@ export default function AdminReportsPage() {
 
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
-      <TopNav activePage="admin" />
+      <TopNav activePage="admin-reports" />
 
       <div className="p-4 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-6">
@@ -574,6 +630,8 @@ export default function AdminReportsPage() {
               ))}
             </div>
           </section>
+
+          <AdminTabHowTo tab={tab} />
 
           {/* ─── Loading / Error ─────────────────────────────────────────────── */}
           {loading ? (

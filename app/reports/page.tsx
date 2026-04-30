@@ -208,6 +208,69 @@ function DiversificationDonut({
   );
 }
 
+function ReportTabHowTo({
+  tab,
+  hasPaidAccess,
+}: {
+  tab: ReportTab;
+  hasPaidAccess: boolean;
+}) {
+  const byTab: Record<ReportTab, { purpose: string; watch: string; action: string }> = {
+    overview: {
+      purpose: "Quick quality and outcome check for your recent decision window.",
+      watch: "AI Decisions, Avg Confidence, Avg CTS, Realized P&L, and AI Interpretation narrative.",
+      action: "If confidence and CTS are both soft, slow down new entries and prioritize only strongest setups.",
+    },
+    risk: {
+      purpose: "Track concentration and open exposure before adding more risk.",
+      watch: "Top symbol share, open winners vs losers, diversification score, and Risk Alerts.",
+      action: "If top symbol concentration is high, rebalance exposure and avoid stacking one ticker.",
+    },
+    coach: {
+      purpose: "Get plain-English feedback on behavior quality from Luckmi AI.",
+      watch: "Strengths, Risks, Symbol Insights, and Watch Next priorities.",
+      action: "Pick one coaching recommendation and follow it for one full report window before changing strategy again.",
+    },
+    advanced: {
+      purpose: "Use deeper diagnostics to detect pattern-level drift early.",
+      watch: "Symbol Scoreboard, AI Performance Coach scenarios, and Adaptive Alerts.",
+      action: "Use the scenario outputs to refine thresholds, then compare against the next 7d/30d window.",
+    },
+  };
+
+  const guide = byTab[tab];
+  const isLocked = (tab === "coach" || tab === "advanced") && !hasPaidAccess;
+
+  return (
+    <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+      <details className="group" open={tab === "overview"}>
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-gray-200">
+          <div className="flex items-center justify-between">
+            <span>How to read this tab</span>
+            <span className="text-xs text-gray-500 transition group-open:rotate-180">⌄</span>
+          </div>
+        </summary>
+        <div className="border-t border-gray-800 px-5 py-4 text-sm text-gray-300">
+          <p>
+            <span className="font-semibold text-white">Purpose:</span> {guide.purpose}
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold text-white">What to watch:</span> {guide.watch}
+          </p>
+          <p className="mt-2">
+            <span className="font-semibold text-white">Action:</span> {guide.action}
+          </p>
+          {isLocked ? (
+            <div className="mt-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              This tab is part of paid analytics. Unlock it to use this workflow directly in-app.
+            </div>
+          ) : null}
+        </div>
+      </details>
+    </section>
+  );
+}
+
 export default function ReportsPage() {
   const [aiDecisions, setAiDecisions] = useState<AiDecision[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -703,6 +766,8 @@ Answer in 4-8 sentences with:
               })}
             </div>
           </section>
+
+          <ReportTabHowTo tab={tab} hasPaidAccess={hasPaidAccess} />
 
           {loading ? (
             <div className="rounded-3xl border border-gray-800 bg-[#11151c] p-6 text-sm text-gray-400">

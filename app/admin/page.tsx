@@ -199,7 +199,7 @@ export default function AdminPage() {
 
     return (
         <div className="min-h-screen bg-[#0b0f16] text-white">
-            <TopNav activePage="admin" />
+            <TopNav activePage="admin-users" />
             <div className="p-6">
                 <div className="max-w-7xl mx-auto">
                     <div className="mb-6">
