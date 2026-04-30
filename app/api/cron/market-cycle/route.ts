@@ -11,8 +11,9 @@
 
 import { NextResponse } from "next/server";
 import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";
-import { runTradeCycleForAllUsers } from "@/app/lib/engine/runTradeCycleForAllUsers";
+import { getActiveTradeCycleUserIds } from "@/app/lib/engine/runTradeCycleForAllUsers";
 import { startCronRun, finishCronRun } from "@/app/lib/cron/logCronRun";
+import { enqueueMarketCycleJobs } from "@/app/lib/engine/jobQueue";
 
 const JOB_NAME = "market-cycle";
 export const maxDuration = 60;
@@ -53,35 +54,37 @@ export async function GET(req: Request) {
       });
     }
 
-    console.info(`[cron:${JOB_NAME}] running trade-cycle-all-users elapsedMs=${elapsed()}`);
-    const result = await runTradeCycleForAllUsers();
+    console.info(`[cron:${JOB_NAME}] loading active users elapsedMs=${elapsed()}`);
+    const activeUserIds = await getActiveTradeCycleUserIds();
+
+    console.info(`[cron:${JOB_NAME}] active users=${activeUserIds.length} elapsedMs=${elapsed()}`);
+
+    const enqueueResult = await enqueueMarketCycleJobs(activeUserIds);
+
+    const result = {
+      success: true,
+      processedUsers: activeUserIds.length,
+      usersEnqueued: enqueueResult.enqueued,
+      usersSkippedAlreadyQueued: enqueueResult.skipped,
+      totalStocksProcessed: 0,
+      usersUpdated: 0,
+      results: [],
+    };
+
     console.info(
-      `[cron:${JOB_NAME}] trade-cycle-all-users complete elapsedMs=${elapsed()} processedUsers=${result.processedUsers ?? 0} usersUpdated=${result.usersUpdated ?? 0} totalStocksProcessed=${result.totalStocksProcessed ?? 0}`
+      `[cron:${JOB_NAME}] enqueue complete elapsedMs=${elapsed()} processedUsers=${result.processedUsers ?? 0} enqueued=${result.usersEnqueued ?? 0} skipped=${result.usersSkippedAlreadyQueued ?? 0}`
     );
 
-    const tradesExecuted = Array.isArray(result.results)
-      ? result.results.reduce((sum, userResult) => {
-          if (
-            userResult &&
-            typeof userResult === "object" &&
-            "tradesExecuted" in userResult &&
-            typeof userResult.tradesExecuted === "number"
-          ) {
-            return sum + userResult.tradesExecuted;
-          }
-
-          return sum;
-        }, 0)
-      : 0;
+    const tradesExecuted = 0;
 
     if (runId) {
       await finishCronRun({
         runId,
         status: "success",
         skipped: false,
-        usersProcessed: result.processedUsers ?? result.processedUsers ?? 0,
-        usersUpdated: result.usersUpdated ?? result.usersUpdated ?? 0,
-        stocksProcessed: result.totalStocksProcessed ?? result.totalStocksProcessed ?? 0,
+        usersProcessed: result.processedUsers ?? 0,
+        usersUpdated: result.usersUpdated ?? 0,
+        stocksProcessed: result.totalStocksProcessed ?? 0,
         tradesExecuted,
         result,
         startedAt,
