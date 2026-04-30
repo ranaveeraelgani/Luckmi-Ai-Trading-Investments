@@ -111,3 +111,16 @@ export async function markEngineJobFailed(jobId: string, message: string) {
     throw error;
   }
 }
+
+export async function clearPendingMarketCycleJobsForUser(userId: string) {
+  const { error } = await supabaseAdmin
+    .from('engine_jobs')
+    .delete()
+    .eq('job_name', MARKET_CYCLE_JOB_NAME)
+    .eq('user_id', userId)
+    .eq('status', 'pending');
+
+  if (error) {
+    throw error;
+  }
+}

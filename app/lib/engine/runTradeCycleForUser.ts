@@ -9,6 +9,7 @@ import { getManualCooldownSeconds, getRemainingManualCooldownSeconds} from "@/ap
 import { executeBrokerTradesForUser } from "@/app/lib/broker/executeBrokerTradesForUser";
 import { getBrokerExecutionMode } from "@/app/lib/broker/getBrokerExecutionMode";
 import { reconcileFilledOrders } from "@/app/lib/broker/reconcileFilledOrders";
+import { clearPendingMarketCycleJobsForUser } from '@/app/lib/engine/jobQueue';
 
 export type TradeCycleRunType = 'manual' | 'cron' | 'admin';
 
@@ -230,6 +231,20 @@ export async function runTradeCycleForUser({
 }: RunTradeCycleForUserParams): Promise<RunTradeCycleForUserResult> {
   const resolvedBaseUrl = baseUrl || getBaseUrl();
   let lockAcquired = false;
+
+  const clearPendingAutoJobIfManual = async () => {
+    if (runType === 'cron') return;
+
+    try {
+      await clearPendingMarketCycleJobsForUser(userId);
+    } catch (error) {
+      console.warn('[engine] failed to clear pending queued job after manual/admin run', {
+        userId,
+        runType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
   try {
     const lockOk = await acquireEngineLock(userId, runType);
@@ -492,6 +507,8 @@ export async function runTradeCycleForUser({
             updatedStocks: updatedStocks,
         });
 
+        await clearPendingAutoJobIfManual();
+
         return {
             success: true,
             status: "success",
@@ -517,6 +534,8 @@ export async function runTradeCycleForUser({
       stocksProcessed: eligibleStocks.length,
       tradesExecuted: trades.length,
     });
+
+    await clearPendingAutoJobIfManual();
 
     return {
       success: true,
