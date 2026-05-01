@@ -12,20 +12,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing required params: symbol, from, to' }, { status: 400 });
   }
 
-  const apiKey = process.env.POLYGON_API_KEY;
+  const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ error: 'Polygon API key missing on server' }, { status: 500 });
+    return NextResponse.json({ error: 'Massive API key missing on server' }, { status: 500 });
   }
 
   try {
-    const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
+    const url = `https://api.massive.com/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
 
     const res = await fetch(url, { cache: 'no-store' });
     const data = await res.json();
 
     if (!res.ok || data.error) {
-      console.error('Polygon error:', data);
-      return NextResponse.json({ error: data.error || 'Failed to fetch from Polygon' }, { status: res.status });
+      console.error('Massive error:', data);
+      return NextResponse.json({ error: data.error || 'Failed to fetch from Massive' }, { status: res.status });
     }
 
     if (!data.results || data.results.length === 0) {
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
       v: data.results.map((r: any) => r.v),
     });
   } catch (err) {
-    console.error('Polygon fetch error:', err);
+    console.error('Massive fetch error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -2,29 +2,28 @@ import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const symbol = searchParams.get('symbol');
+  const symbol = searchParams.get('symbol')?.trim().toUpperCase();
 
-  const apiKey = process.env.FINNHUB_API_KEY; // ← same key you use for /api/quotes
+  const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
   if (!apiKey || !symbol) {
     return NextResponse.json({ error: 'Missing key/symbol' }, { status: 400 });
   }
 
   try {
-    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const to = new Date().toISOString().split('T')[0];
-
     const res = await fetch(
-      `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${from}&to=${to}&token=${apiKey}`
+      `https://api.massive.com/v2/reference/news?ticker=${encodeURIComponent(symbol)}&order=desc&sort=published_utc&limit=10&apiKey=${apiKey}`,
+      { cache: 'no-store' }
     );
 
-    if (!res.ok) throw new Error(`Finnhub ${res.status}`);
+    if (!res.ok) throw new Error(`Massive ${res.status}`);
 
-    const news = await res.json();
-    // Last 10 items only
-    const recent = news.slice(0, 10).map((n: any) => ({
-      headline: n.headline,
-      summary: n.summary || '',
-      datetime: new Date(n.datetime * 1000),
+    const data = await res.json();
+    const rows = Array.isArray(data?.results) ? data.results : [];
+
+    const recent = rows.slice(0, 10).map((n: any) => ({
+      headline: n.title || 'No headline',
+      summary: n.description || '',
+      datetime: n.published_utc ? new Date(n.published_utc) : new Date(),
     }));
 
     return NextResponse.json(recent);

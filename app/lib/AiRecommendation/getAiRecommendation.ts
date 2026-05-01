@@ -131,7 +131,10 @@ CORE RULES:
    - favorable entry zone
    - wait for reclaim
    - avoid chasing into resistance
-   - sell/avoid if breakdown level fails
+  - sell/avoid buying if breakdown level fails
+
+IMPORTANT:
+- Use ACTION "Avoid" when the setup is not good for initiating a new position (avoid buying right now).
 
 AI SCORE RULES:
 - Generate a NEW score (do not copy Final CTS).

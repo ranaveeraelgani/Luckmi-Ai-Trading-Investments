@@ -10,7 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";
+import { isMarketOpenNowLive } from "@/app/lib/market/isMarketOpenNow";
 import { getActiveTradeCycleUserIds } from "@/app/lib/engine/runTradeCycleForAllUsers";
 import { startCronRun, finishCronRun } from "@/app/lib/cron/logCronRun";
 import { enqueueMarketCycleJobs } from "@/app/lib/engine/jobQueue";
@@ -32,7 +32,7 @@ export async function GET(req: Request) {
 
   try {
     console.info(`[cron:${JOB_NAME}] market-check elapsedMs=${elapsed()}`);
-    if (!isMarketOpenNow()) {
+    if (!(await isMarketOpenNowLive())) {
       if (runId) {
         await finishCronRun({
           runId,

@@ -1,21 +1,3 @@
-const MARKET_HOLIDAYS_2026 = new Set([
-  "2026-01-01",
-  "2026-01-19",
-  "2026-02-16",
-  "2026-04-03",
-  "2026-05-25",
-  "2026-06-19",
-  "2026-07-03",
-  "2026-09-07",
-  "2026-11-26",
-  "2026-12-25",
-]);
-
-const EARLY_CLOSES_2026 = new Set([
-  "2026-11-27",
-  "2026-12-24",
-]);
-
 function getEasternParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -44,11 +26,43 @@ export function isMarketOpenNow(date = new Date()) {
   const et = getEasternParts(date);
 
   if (et.weekday === "Sat" || et.weekday === "Sun") return false;
-  if (MARKET_HOLIDAYS_2026.has(et.date)) return false;
 
   const minutes = et.hour * 60 + et.minute;
   const open = 9 * 60 + 30;
-  const close = EARLY_CLOSES_2026.has(et.date) ? 13 * 60 : 16 * 60;
+  const close = 16 * 60;
 
   return minutes >= open && minutes < close;
+}
+
+function getMassiveApiKey() {
+  return process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || "";
+}
+
+export async function isMarketOpenNowLive() {
+  const apiKey = getMassiveApiKey();
+
+  if (!apiKey) {
+    return isMarketOpenNow();
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.massive.com/v1/marketstatus/now?apiKey=${apiKey}`,
+      { cache: "no-store" }
+    );
+
+    if (!res.ok) {
+      return isMarketOpenNow();
+    }
+
+    const data = await res.json();
+    const market = String(data?.market || "").toLowerCase();
+    const nyse = String(data?.exchanges?.nyse || "").toLowerCase();
+    const nasdaq = String(data?.exchanges?.nasdaq || "").toLowerCase();
+
+    // We treat regular-session "open" as tradable; extended/pre/post are considered closed for this engine.
+    return market === "open" || nyse === "open" || nasdaq === "open";
+  } catch {
+    return isMarketOpenNow();
+  }
 }

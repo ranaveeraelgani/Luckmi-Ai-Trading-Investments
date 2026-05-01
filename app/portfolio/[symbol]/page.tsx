@@ -91,7 +91,11 @@ export default function PortfolioSymbolPage() {
 
         if (portfolioRes.status === "fulfilled" && portfolioRes.value.ok) {
           const portfolioData = await portfolioRes.value.json();
-          const items = Array.isArray(portfolioData) ? portfolioData : [];
+          const items = Array.isArray(portfolioData)
+            ? portfolioData
+            : Array.isArray(portfolioData?.positions)
+            ? portfolioData.positions
+            : [];
           const matched = items.find(
             (item: PortfolioItem) => item.symbol?.toUpperCase() === symbol
           );

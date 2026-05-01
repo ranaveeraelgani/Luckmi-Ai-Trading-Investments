@@ -4,35 +4,54 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbols = searchParams.get('symbols');
 
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
   if (!apiKey || !symbols) {
-    return NextResponse.json({ error: 'Missing Finnhub API key or symbols' }, { status: 400 });
+    return NextResponse.json({ error: 'Missing Massive API key or symbols' }, { status: 400 });
   }
 
   try {
-    const symbolList = symbols.split(',');
-    const results = [];
+    const symbolList = symbols
+      .split(',')
+      .map((s) => String(s || '').trim().toUpperCase())
+      .filter(Boolean);
 
-    // Finnhub quote is per-symbol, so we make parallel calls
-    const promises = symbolList.map(async (symbol) => {
-      try {
-        const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${apiKey}`);
-        if (!res.ok) throw new Error(`Finnhub error ${res.status}`);
+    if (symbolList.length === 0) {
+      return NextResponse.json([]);
+    }
 
-        const data = await res.json();
+    const url = `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(symbolList.join(','))}&apiKey=${apiKey}`;
+    const res = await fetch(url, { cache: 'no-store' });
 
-        return {
-          symbol,
-          price: data.c ? data.c.toFixed(2) : 'N/A',
-          change: data.d ? data.d.toFixed(2) : '0',
-          percentChange: data.dp ? data.dp.toFixed(2) : '0',
-        };
-      } catch (err) {
+    if (!res.ok) {
+      throw new Error(`Massive error ${res.status}`);
+    }
+
+    const payload = await res.json();
+    const rows: any[] = Array.isArray(payload?.tickers) ? payload.tickers : [];
+    const byTicker = new Map<string, any>(
+      rows
+        .filter((r) => r?.ticker)
+        .map((r) => [String(r.ticker).toUpperCase(), r])
+    );
+
+    const data = symbolList.map((symbol) => {
+      const row = byTicker.get(symbol);
+      if (!row) {
         return { symbol, error: true, price: 'N/A', change: 0, percentChange: 0 };
       }
+
+      const price = Number(row?.lastTrade?.p ?? row?.min?.c ?? row?.day?.c ?? row?.prevDay?.c);
+      const change = Number(row?.todaysChange ?? 0);
+      const percentChange = Number(row?.todaysChangePerc ?? 0);
+
+      return {
+        symbol,
+        price: Number.isFinite(price) ? price.toFixed(2) : 'N/A',
+        change: Number.isFinite(change) ? change.toFixed(2) : '0',
+        percentChange: Number.isFinite(percentChange) ? percentChange.toFixed(2) : '0',
+      };
     });
 
-    const data = await Promise.all(promises);
     return NextResponse.json(data);
   } catch (err) {
     console.error('Quotes route error', err);

@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 
 export async function GET() {
-  const apiKey = process.env.POLYGON_API_KEY;
+  const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
 
   if (!apiKey) {
-    console.error('Missing POLYGON_API_KEY in environment');
+    console.error('Missing Massive API key in environment');
     return NextResponse.json(
       { error: 'Server configuration error: API key missing' },
       { status: 500 }
@@ -12,8 +12,8 @@ export async function GET() {
   }
 
   try {
-    const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=${apiKey}`;
-    //console.log('Fetching Polygon gainers from:', url.replace(apiKey, '***')); // hide key in logs
+    const url = `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=${apiKey}`;
+    //console.log('Fetching Massive gainers from:', url.replace(apiKey, '***')); // hide key in logs
 
     const res = await fetch(url, {
       next: { revalidate: 180 }, // 3 min cache
@@ -22,19 +22,19 @@ export async function GET() {
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.error(`Polygon fetch failed: ${res.status} - ${errorText}`);
+      console.error(`Massive fetch failed: ${res.status} - ${errorText}`);
       return NextResponse.json(
-        { error: `Polygon API error: ${res.status} - ${errorText.slice(0, 200)}` },
+        { error: `Massive API error: ${res.status} - ${errorText.slice(0, 200)}` },
         { status: res.status }
       );
     }
 
     const data = await res.json();
-    console.log('Polygon raw response:', JSON.stringify(data, null, 2).slice(0, 500)); // truncate for logs
+    console.log('Massive raw response:', JSON.stringify(data, null, 2).slice(0, 500)); // truncate for logs
 
     const tickers = data.tickers || [];
     if (tickers.length === 0) {
-      console.warn('Polygon returned empty gainers list');
+      console.warn('Massive returned empty gainers list');
     }
 
     const trending = tickers.slice(0, 10).map((t: any) => ({

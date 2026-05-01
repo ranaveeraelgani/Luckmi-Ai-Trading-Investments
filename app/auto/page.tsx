@@ -7,6 +7,7 @@ import AddAutoStockModal from "@/components/auto/AddAutoStockModal";
 import BuyMoreModal from "@/components/auto/BuyMoreModal";
 import RunTradeCycleButton from "@/components/RunTradeCycleButton";
 import BrokerStatusCard from "@/components/broker/BrokerStatusCard";
+import AutoTradingGuideModal from "@/components/shared/AutoTradingGuideModal";
 
 type AutoStock = {
   id: string;
@@ -269,6 +270,8 @@ export default function AutoTradingPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [expandedTradeKeys, setExpandedTradeKeys] = useState<Record<string, boolean>>({});
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [showGuideHighlight, setShowGuideHighlight] = useState(false);
 
   async function refreshDashboardData() {
     await Promise.all([fetchAutoStocks(), fetchLastRun(), fetchTrades()]);
@@ -277,6 +280,20 @@ export default function AutoTradingPage() {
 
   useEffect(() => {
     void refreshDashboardData();
+  }, []);
+
+  useEffect(() => {
+    const key = "auto_trading_guide_seen_v1";
+
+    try {
+      const seen = window.localStorage.getItem(key) === "1";
+      if (!seen) {
+        setShowGuideModal(true);
+        setShowGuideHighlight(true);
+      }
+    } catch {
+      // Ignore storage errors and continue without persistence.
+    }
   }, []);
 
   useEffect(() => {
@@ -615,6 +632,18 @@ export default function AutoTradingPage() {
     setConfirmAction(null);
   }
 
+  function closeGuideModal() {
+    const key = "auto_trading_guide_seen_v1";
+    setShowGuideModal(false);
+    setShowGuideHighlight(false);
+
+    try {
+      window.localStorage.setItem(key, "1");
+    } catch {
+      // Ignore storage errors and continue.
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#0F1117] text-white">
       <TopNav activePage="auto" />
@@ -636,12 +665,31 @@ export default function AutoTradingPage() {
               <p className="mt-1 text-xs text-gray-500">Last updated: {formatDate(lastUpdatedAt)}</p>
             </div>
 
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400"
-            >
-              + Add Auto Stock
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowGuideModal(true)}
+                className={`relative rounded-2xl border px-4 py-2.5 text-sm font-medium transition ${
+                  showGuideHighlight
+                    ? "animate-pulse border-[#F5C76E]/50 bg-[#F5C76E]/15 text-[#F5C76E]"
+                    : "border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E] hover:bg-[#F5C76E]/20"
+                }`}
+              >
+                How Auto Trading Works
+                {showGuideHighlight ? (
+                  <span className="absolute -right-1.5 -top-1.5 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold text-black">
+                    New
+                  </span>
+                ) : null}
+              </button>
+
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400"
+              >
+                + Add Auto Stock
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[1.35fr_.9fr]">
@@ -1288,6 +1336,11 @@ export default function AutoTradingPage() {
               </section>
             </div>
           ) : null}
+
+          <AutoTradingGuideModal
+            isOpen={showGuideModal}
+            onClose={closeGuideModal}
+          />
         </div>
       </main>
     </div>

@@ -3,31 +3,32 @@ import { NextResponse } from 'next/server';
 
 export async function GET() {
   try {
-    const apiKey = process.env.FINNHUB_API_KEY;
+    const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
     
     if (!apiKey) {
-      return NextResponse.json({ error: 'Finnhub API key not configured' }, { status: 500 });
+      return NextResponse.json({ error: 'Massive API key not configured' }, { status: 500 });
     }
 
-    // Fetch general market news from Finnhub
+    // Fetch general market news from Massive
     const response = await fetch(
-      `https://finnhub.io/api/v1/news?category=general&token=${apiKey}`,
-      { cache: 'no-store' } // or 'force-cache' if you want some caching
+      `https://api.massive.com/v2/reference/news?order=desc&sort=published_utc&limit=8&apiKey=${apiKey}`,
+      { cache: 'no-store' }
     );
 
     if (!response.ok) {
-      throw new Error(`Finnhub error: ${response.status}`);
+      throw new Error(`Massive error: ${response.status}`);
     }
 
     const data = await response.json();
+    const rows = Array.isArray(data?.results) ? data.results : [];
 
     // Return only the most relevant fields
-    const formattedNews = data.slice(0, 8).map((item: any) => ({
-      headline: item.headline || 'No headline',
-      summary: item.summary || '',
-      url: item.url || '',
-      source: item.source || 'Finnhub',
-      datetime: item.datetime ? new Date(item.datetime * 1000).toLocaleDateString() : 'Recent',
+    const formattedNews = rows.slice(0, 8).map((item: any) => ({
+      headline: item.title || 'No headline',
+      summary: item.description || '',
+      url: item.article_url || '',
+      source: item?.publisher?.name || 'Massive',
+      datetime: item.published_utc ? new Date(item.published_utc).toLocaleDateString() : 'Recent',
     }));
 
     return NextResponse.json(formattedNews);

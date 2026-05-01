@@ -24,8 +24,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const finnhubApiKey = process.env.FINNHUB_API_KEY;
-    if (!finnhubApiKey) {
+    const massiveApiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
+    if (!massiveApiKey) {
       return NextResponse.json(
         { error: "Price validation is unavailable right now" },
         { status: 503 }
@@ -33,7 +33,8 @@ export async function POST(req: Request) {
     }
 
     const quoteRes = await fetch(
-      `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${finnhubApiKey}`
+      `https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(symbol)}&apiKey=${massiveApiKey}`,
+      { cache: "no-store" }
     );
 
     if (!quoteRes.ok) {
@@ -44,7 +45,8 @@ export async function POST(req: Request) {
     }
 
     const quoteData = await quoteRes.json();
-    const lastPrice = Number(quoteData?.c);
+    const row = Array.isArray(quoteData?.tickers) ? quoteData.tickers[0] : null;
+    const lastPrice = Number(row?.lastTrade?.p ?? row?.min?.c ?? row?.day?.c ?? row?.prevDay?.c);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) {
       return NextResponse.json(
         { error: `${symbol} has no live price and cannot be added` },

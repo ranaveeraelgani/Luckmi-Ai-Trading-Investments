@@ -293,6 +293,10 @@ export default function ReportsPage() {
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
   const [explainResponse, setExplainResponse] = useState<string | null>(null);
+  const [advancedPrompt, setAdvancedPrompt] = useState("");
+  const [advancedLoading, setAdvancedLoading] = useState(false);
+  const [advancedError, setAdvancedError] = useState<string | null>(null);
+  const [advancedResponse, setAdvancedResponse] = useState<string | null>(null);
 
   useEffect(() => {
     void loadReports();
@@ -433,6 +437,86 @@ Answer in 4-8 sentences with:
       setExplainError(err?.message || "Failed to get explanation");
     } finally {
       setExplainLoading(false);
+    }
+  }
+
+  async function askLuckmiAdvanced() {
+    const question =
+      advancedPrompt.trim() ||
+      "Give a quantitative diagnostics read: where performance drift is happening, what threshold to tune first, and what to test next 7 days.";
+
+    try {
+      setAdvancedLoading(true);
+      setAdvancedError(null);
+
+      const prompt = `You are Luckmi AI Advanced Diagnostics Assistant.
+You are analyzing existing report metrics only.
+Do not provide financial advice. Do not promise outcomes.
+Focus on diagnostics, drift detection, and parameter tuning logic.
+
+User request: ${question}
+
+Advanced context:
+${JSON.stringify(
+  {
+    range,
+    metrics: {
+      totalDecisions: metrics.totalDecisions,
+      avgConfidence: metrics.avgConfidence,
+      avgCts: metrics.avgCts,
+      winRate: metrics.winRate,
+      realizedPnL: metrics.realizedPnL,
+      highConfidenceSellWinRate: metrics.highConfidenceSellWinRate,
+      strictFilterPnL: metrics.strictFilterPnL,
+      openPositionsCount: metrics.openPositionsCount,
+      openUnrealized: metrics.openUnrealized,
+      openWinners: metrics.openWinners,
+      openLosers: metrics.openLosers,
+      buys: metrics.buys,
+      holds: metrics.holds,
+      sells: metrics.sells,
+      sellTradesCount: metrics.sellTradesCount,
+    },
+    diversification: {
+      score: diversification.score,
+      status: diversification.status,
+      topSymbol: diversification.topSymbol,
+      topPercent: diversification.topPercent,
+    },
+    symbolScoreboard: metrics.symbolScoreboard,
+  },
+  null,
+  2
+)}
+
+Return exactly these sections in plain text:
+1) DIAGNOSTIC SUMMARY (3-5 sentences)
+2) ROOT CAUSES (3 concise bullets)
+3) PARAMETER TUNING PLAN (3 concise bullets)
+4) NEXT 7-DAY TEST PLAN (3 concise bullets)
+5) RISK GUARDRAILS (3 concise bullets)
+
+Keep it practical and data-driven.`;
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to get advanced diagnostics");
+      }
+
+      setAdvancedResponse(String(data?.content || "No diagnostics available."));
+    } catch (err: any) {
+      setAdvancedError(err?.message || "Failed to get advanced diagnostics");
+    } finally {
+      setAdvancedLoading(false);
     }
   }
 
@@ -1223,6 +1307,73 @@ Answer in 4-8 sentences with:
           {!loading && tab === "advanced" ? (
             hasPaidAccess ? (
               <>
+                <Section
+                  title="Luckmi Advanced Lab"
+                  subtitle="Interactive diagnostics for drift detection, threshold tuning, and test planning."
+                  icon={<LuckmiAiIcon size={20} />}
+                >
+                  <div className="rounded-2xl border border-[#F5C76E]/20 bg-[#F5C76E]/10 p-4 text-sm text-[#F5C76E]">
+                    This interaction is different from AI Coach. Coach focuses on behavior guidance. Advanced Lab focuses on quantitative diagnostics, parameter tuning, and test plans.
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-[#0A101A] p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">Ask Luckmi Advanced</h3>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Request root-cause analysis, threshold tuning ideas, and experiment design from your current report data.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void askLuckmiAdvanced()}
+                        disabled={advancedLoading}
+                        className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/20 disabled:opacity-50"
+                      >
+                        {advancedLoading ? "Running diagnostics..." : "Run Advanced Diagnostics"}
+                      </button>
+                    </div>
+
+                    <textarea
+                      value={advancedPrompt}
+                      onChange={(event) => setAdvancedPrompt(event.target.value)}
+                      placeholder="Example: Which metric drift matters most right now, and what exact threshold should I adjust first?"
+                      className="mt-3 w-full rounded-xl border border-white/10 bg-[#0E1420] px-3 py-2 text-sm text-gray-200 outline-none transition focus:border-blue-500/40"
+                      rows={3}
+                    />
+
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        "Find the biggest performance drift driver",
+                        "Recommend one threshold change with rationale",
+                        "Design a 7-day A/B test for exits",
+                        "Show risk guardrails for concentration and confidence",
+                      ].map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => setAdvancedPrompt(chip)}
+                          className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs text-blue-300 transition hover:border-blue-500/40 hover:bg-blue-500/25"
+                        >
+                          {chip}
+                        </button>
+                      ))}
+                    </div>
+
+                    {advancedError ? (
+                      <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                        {advancedError}
+                      </div>
+                    ) : null}
+
+                    {advancedResponse ? (
+                      <div className="mt-3 rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm leading-6 text-blue-100 whitespace-pre-wrap">
+                        {advancedResponse}
+                      </div>
+                    ) : null}
+                  </div>
+                </Section>
+
                 <div className="grid gap-6 xl:grid-cols-2">
                   <Section
                     title="Symbol Scoreboard"

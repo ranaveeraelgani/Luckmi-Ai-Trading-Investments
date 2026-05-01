@@ -95,6 +95,17 @@ function actionClass(action?: string | null) {
   return "border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]";
 }
 
+function actionLabel(action?: string | null) {
+  const trimmed = String(action || '').trim();
+  if (!trimmed) return 'Unclear';
+
+  if (trimmed.toLowerCase() === 'avoid') {
+    return 'Avoid Buying';
+  }
+
+  return trimmed;
+}
+
 function Pill({
   children,
   className = "",
@@ -297,7 +308,7 @@ export default function StockDetailView({
             <div className="flex flex-wrap gap-2">
               {ai?.action ? (
                 <Pill className={actionClass(ai.action)}>
-                  {ai.action}
+                  {actionLabel(ai.action)}
                 </Pill>
               ) : null}
 

@@ -1,6 +1,6 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { runTradeCycleForUser } from '@/app/lib/engine/runTradeCycleForUser';
-import { isMarketOpenNow } from "@/app/lib/market/isMarketOpenNow";
+import { isMarketOpenNowLive } from "@/app/lib/market/isMarketOpenNow";
 import { reconcileFilledOrders } from '@/app/lib/broker/reconcileFilledOrders';
 
 export async function GET() {
@@ -13,7 +13,7 @@ export async function GET() {
   if (!user) {
     return new Response('Unauthorized', { status: 401 });
   }
-   if (!isMarketOpenNow()) {
+  if (!(await isMarketOpenNowLive())) {
     await reconcileFilledOrders(user.id);
 
     return Response.json(
