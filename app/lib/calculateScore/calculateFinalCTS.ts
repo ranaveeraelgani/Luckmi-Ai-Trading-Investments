@@ -2,7 +2,6 @@ import { calculate15mCTS } from "../ctsHelpers/calculate15mCTS";
 import { calculateCombinedCTS } from "../ctsHelpers/calculateCombinedCTS";
 import { calculateDailyCTS } from "../ctsHelpers/calculateDailyCTS";
 import { calculateMACD } from "../ctsHelpers/calculateMACD";
-import { calculateNewsSentiment } from "../ctsHelpers/calculateNewsSentiment";
 // =========================
 // helper
 // =========================

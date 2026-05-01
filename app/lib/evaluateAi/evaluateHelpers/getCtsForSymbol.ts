@@ -3,7 +3,6 @@ import { calculateEMA } from '@/app/lib/ctsHelpers/calculateEMA'
 import { calculateRSI } from '@/app/lib/ctsHelpers/calculateRSI'
 import { detectRectangleBreakout } from '@/app/lib/ctsHelpers/detectRectangleBreakout'
 import { calculateFinalCTS } from '@/app/lib/calculateScore/calculateFinalCTS';
-import { getNewsSentiment } from '../../ctsHelpers/getNewsSentiment';
 import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 
 const toNumber = (value: string | number | undefined): number => {

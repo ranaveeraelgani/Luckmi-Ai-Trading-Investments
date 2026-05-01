@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import TopNav from "@/components/TopNav";
+import { useMarketHoliday } from "@/app/hooks/useMarketHoliday";
 import LuckmiScoreModal from "@/components/shared/LuckmiScoreModal";
 import  LuckmiAiIcon  from "@/components/brand/LuckmiAiIcon";
 import CronRunsCard from "@/components/admin/CronRunsCard";
@@ -47,6 +48,7 @@ function Card({
 export default function DashboardPage() {
   const [trendingStocks, setTrendingStocks] = useState<TrendingStock[]>([]);
   const [showCtsModal, setShowCtsModal] = useState(false);
+  const { event: holidayEvent } = useMarketHoliday(4);
 
   useEffect(() => {
     fetchTrending();
@@ -74,6 +76,17 @@ export default function DashboardPage() {
 
       <div className="p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
+          {holidayEvent ? (
+            <div className="flex items-center gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200">
+              <span>📅</span>
+              <span>
+                <span className="font-medium">{holidayEvent.name}</span>
+                {" "}— Market {holidayEvent.status === "early-close" ? "closes early" : "closed"} on{" "}
+                {new Date(holidayEvent.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+              </span>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h1 className="text-2xl font-semibold sm:text-3xl">Dashboard</h1>

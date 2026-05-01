@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import TopNav from "@/components/TopNav";
 import LuckmiAiIcon from "@/components/brand/LuckmiAiIcon";
+import { askLuckmiExplain, type AiReview } from "@/app/lib/reports/askLuckmiExplain";
+import { askLuckmiAdvancedDiagnostics } from "@/app/lib/reports/askLuckmiAdvanced";
 
 type AiDecision = {
   id: string;
@@ -40,24 +42,6 @@ type Position = {
 
 type TimeRange = "7d" | "30d" | "90d" | "all";
 type ReportTab = "overview" | "risk" | "coach" | "advanced";
-
-type AiReview = {
-  overview: string;
-  strengths: string[];
-  risks: string[];
-  symbolInsights: { symbol: string; insight: string }[];
-  nextFocus: string[];
-  meta?: {
-    generatedAt?: string;
-    sampleSizes?: {
-      trades?: number;
-      aiDecisions?: number;
-      brokerOrders?: number;
-      positions?: number;
-      brokerPositions?: number;
-    };
-  };
-};
 
 type SubscriptionState = {
   enabled: boolean;
@@ -383,56 +367,11 @@ export default function ReportsPage() {
 
   async function askLuckmiToExplain() {
     if (!aiReview) return;
-
-    const question =
-      explainPrompt.trim() ||
-      "Explain the most important risk in simple terms and what I should change first.";
-
     try {
       setExplainLoading(true);
       setExplainError(null);
-
-      const prompt = `You are Luckmi AI Trading Assistant.
-You are explaining an existing trading review, not giving fresh trade signals.
-Do not provide financial advice and do not promise profits.
-Use plain English and keep it concise.
-
-User question: ${question}
-
-Current review context:
-${JSON.stringify(
-  {
-    overview: aiReview.overview,
-    strengths: aiReview.strengths,
-    risks: aiReview.risks,
-    symbolInsights: aiReview.symbolInsights,
-    nextFocus: aiReview.nextFocus,
-  },
-  null,
-  2
-)}
-
-Answer in 4-8 sentences with:
-1) direct answer,
-2) what it means,
-3) what user should focus on next.
-`;
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to get explanation");
-      }
-
-      setExplainResponse(String(data?.content || "No explanation available."));
+      const result = await askLuckmiExplain(aiReview, explainPrompt);
+      setExplainResponse(result);
     } catch (err: any) {
       setExplainError(err?.message || "Failed to get explanation");
     } finally {
@@ -441,78 +380,16 @@ Answer in 4-8 sentences with:
   }
 
   async function askLuckmiAdvanced() {
-    const question =
-      advancedPrompt.trim() ||
-      "Give a quantitative diagnostics read: where performance drift is happening, what threshold to tune first, and what to test next 7 days.";
-
     try {
       setAdvancedLoading(true);
       setAdvancedError(null);
-
-      const prompt = `You are Luckmi AI Advanced Diagnostics Assistant.
-You are analyzing existing report metrics only.
-Do not provide financial advice. Do not promise outcomes.
-Focus on diagnostics, drift detection, and parameter tuning logic.
-
-User request: ${question}
-
-Advanced context:
-${JSON.stringify(
-  {
-    range,
-    metrics: {
-      totalDecisions: metrics.totalDecisions,
-      avgConfidence: metrics.avgConfidence,
-      avgCts: metrics.avgCts,
-      winRate: metrics.winRate,
-      realizedPnL: metrics.realizedPnL,
-      highConfidenceSellWinRate: metrics.highConfidenceSellWinRate,
-      strictFilterPnL: metrics.strictFilterPnL,
-      openPositionsCount: metrics.openPositionsCount,
-      openUnrealized: metrics.openUnrealized,
-      openWinners: metrics.openWinners,
-      openLosers: metrics.openLosers,
-      buys: metrics.buys,
-      holds: metrics.holds,
-      sells: metrics.sells,
-      sellTradesCount: metrics.sellTradesCount,
-    },
-    diversification: {
-      score: diversification.score,
-      status: diversification.status,
-      topSymbol: diversification.topSymbol,
-      topPercent: diversification.topPercent,
-    },
-    symbolScoreboard: metrics.symbolScoreboard,
-  },
-  null,
-  2
-)}
-
-Return exactly these sections in plain text:
-1) DIAGNOSTIC SUMMARY (3-5 sentences)
-2) ROOT CAUSES (3 concise bullets)
-3) PARAMETER TUNING PLAN (3 concise bullets)
-4) NEXT 7-DAY TEST PLAN (3 concise bullets)
-5) RISK GUARDRAILS (3 concise bullets)
-
-Keep it practical and data-driven.`;
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-        }),
+      const result = await askLuckmiAdvancedDiagnostics({
+        question: advancedPrompt,
+        range,
+        metrics,
+        diversification,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to get advanced diagnostics");
-      }
-
-      setAdvancedResponse(String(data?.content || "No diagnostics available."));
+      setAdvancedResponse(result);
     } catch (err: any) {
       setAdvancedError(err?.message || "Failed to get advanced diagnostics");
     } finally {

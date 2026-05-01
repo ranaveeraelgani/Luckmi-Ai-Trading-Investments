@@ -143,6 +143,14 @@ function MiniMetric({
   );
 }
 
+function SentimentBadge({ sentiment }: { sentiment?: string | null }) {
+  if (!sentiment) return null;
+  const s = sentiment.toLowerCase();
+  if (s === 'bullish') return <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">Bullish</span>;
+  if (s === 'bearish') return <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-300">Bearish</span>;
+  return <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-gray-400">Neutral</span>;
+}
+
 function NewsItem({
   item,
 }: {
@@ -162,7 +170,10 @@ function NewsItem({
       <div className="line-clamp-2 text-sm font-medium leading-5 text-white">
         {title}
       </div>
-      <div className="mt-1 text-xs text-gray-500">{source}</div>
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="text-xs text-gray-500">{source}</span>
+        <SentimentBadge sentiment={item?.sentiment} />
+      </div>
     </a>
   );
 }

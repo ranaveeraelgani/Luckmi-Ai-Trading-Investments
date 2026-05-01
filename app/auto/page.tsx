@@ -8,6 +8,7 @@ import BuyMoreModal from "@/components/auto/BuyMoreModal";
 import RunTradeCycleButton from "@/components/RunTradeCycleButton";
 import BrokerStatusCard from "@/components/broker/BrokerStatusCard";
 import AutoTradingGuideModal from "@/components/shared/AutoTradingGuideModal";
+import { useMarketHoliday } from "@/app/hooks/useMarketHoliday";
 
 type AutoStock = {
   id: string;
@@ -644,12 +645,25 @@ export default function AutoTradingPage() {
     }
   }
 
+  const { event: holidayEvent } = useMarketHoliday(4);
+
   return (
     <div className="min-h-screen bg-[#0F1117] text-white">
       <TopNav activePage="auto" />
 
       <main className="p-4 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-6">
+          {holidayEvent ? (
+            <div className="flex items-center gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200">
+              <span>📅</span>
+              <span>
+                <span className="font-medium">{holidayEvent.name}</span>
+                {" "}— Market {holidayEvent.status === "early-close" ? "closes early" : "closed"} on{" "}
+                {new Date(holidayEvent.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+              </span>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <div className="flex items-center gap-3">

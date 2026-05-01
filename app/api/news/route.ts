@@ -20,11 +20,23 @@ export async function GET(request: Request) {
     const data = await res.json();
     const rows = Array.isArray(data?.results) ? data.results : [];
 
-    const recent = rows.slice(0, 10).map((n: any) => ({
-      headline: n.title || 'No headline',
-      summary: n.description || '',
-      datetime: n.published_utc ? new Date(n.published_utc) : new Date(),
-    }));
+    const recent = rows.slice(0, 10).map((n: any) => {
+      // Massive includes per-ticker AI sentiment in insights[]
+      const tickerInsight = Array.isArray(n.insights)
+        ? n.insights.find((i: any) => String(i.ticker || '').toUpperCase() === symbol)
+        : null;
+      const sentiment: 'bullish' | 'bearish' | 'neutral' | null =
+        tickerInsight?.sentiment ?? null;
+
+      return {
+        headline: n.title || 'No headline',
+        summary: n.description || '',
+        url: n.article_url || '',
+        source: n.publisher?.name || '',
+        datetime: n.published_utc ? new Date(n.published_utc) : new Date(),
+        sentiment,
+      };
+    });
 
     return NextResponse.json(recent);
   } catch (err) {

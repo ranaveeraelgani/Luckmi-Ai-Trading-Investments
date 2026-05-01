@@ -16,6 +16,12 @@ type Quote = {
   percentChange?: number | string | null;
 };
 
+type CompanyInfo = {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+};
+
 function formatPrice(value?: number | string | null) {
   const num = typeof value === "number" ? value : Number(value);
   return Number.isFinite(num) ? `$${num.toFixed(2)}` : "--";
@@ -33,10 +39,11 @@ export default function WatchlistPage() {
 
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [companyInfo, setCompanyInfo] = useState<Record<string, CompanyInfo>>({});
   const [loading, setLoading] = useState(true);
   const [removingSymbol, setRemovingSymbol] = useState<string | null>(null);
-    const [newSymbol, setNewSymbol] = useState("");
-    const [addingSymbol, setAddingSymbol] = useState(false);
+  const [newSymbol, setNewSymbol] = useState("");
+  const [addingSymbol, setAddingSymbol] = useState(false);
   useEffect(() => {
     loadWatchlist();
   }, []);
@@ -52,13 +59,37 @@ export default function WatchlistPage() {
 
       const symbols = items.map((s) => s.symbol).filter(Boolean);
       if (symbols.length) {
-        await fetchQuotes(symbols);
+        await Promise.all([fetchQuotes(symbols), fetchCompanyInfo(symbols)]);
       }
     } catch (err) {
       console.error("Failed to load watchlist", err);
       setWatchlist([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchCompanyInfo(symbols: string[]) {
+    try {
+      const results = await Promise.allSettled(
+        symbols.map((s) =>
+          fetch(`/api/company-info?symbol=${s}`, { cache: "no-store" }).then((r) =>
+            r.ok ? r.json() : null
+          )
+        )
+      );
+      const map: Record<string, CompanyInfo> = {};
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value?.symbol) {
+          map[r.value.symbol] = r.value;
+        } else {
+          // fallback: keep symbol as-is
+          map[symbols[i]] = { symbol: symbols[i], name: null, sector: null };
+        }
+      });
+      setCompanyInfo(map);
+    } catch (err) {
+      console.error("Company info fetch failed", err);
     }
   }
 
@@ -207,6 +238,14 @@ export default function WatchlistPage() {
                       <div className="text-sm font-semibold text-white sm:text-base">
                         {item.symbol}
                       </div>
+                      {companyInfo[item.symbol]?.name ? (
+                        <div className="mt-0.5 truncate text-xs text-gray-400">
+                          {companyInfo[item.symbol].name}
+                          {companyInfo[item.symbol].sector ? (
+                            <span className="ml-1.5 text-gray-600">· {companyInfo[item.symbol].sector}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="text-right">
