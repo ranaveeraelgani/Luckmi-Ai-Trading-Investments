@@ -1037,7 +1037,7 @@ export default function AutoTradingPage() {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="stock-detail-title"
-                className="absolute bottom-0 left-0 right-0 max-h-[90vh] rounded-t-3xl border-t border-white/10 bg-[#0F1117] shadow-2xl"
+                className="absolute bottom-0 left-1/2 w-full max-w-7xl -translate-x-1/2 max-h-[90vh] rounded-t-3xl border-t border-white/10 bg-[#0F1117] shadow-2xl"
               >
                 <div className="mx-auto mt-3 h-1.5 w-14 rounded-full bg-white/20" />
 

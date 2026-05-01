@@ -189,7 +189,7 @@ export async function reconcileFilledOrders(userId: string) {
 
         const { data: latestDecision } = await supabaseAdmin
           .from("ai_decisions")
-          .select("reason, confidence, cts_score, sell_score")
+          .select("reason, confidence, cts_score, cts_breakdown")
           .eq("user_id", userId)
           .eq("auto_stock_id", order.auto_stock_id)
           .in("action", actionFilter)
@@ -201,7 +201,10 @@ export async function reconcileFilledOrders(userId: string) {
           aiReason = latestDecision.reason || null;
           aiConfidence = latestDecision.confidence != null ? n(latestDecision.confidence) : null;
           aiCtsScore = latestDecision.cts_score != null ? n(latestDecision.cts_score) : null;
-          aiSellScore = latestDecision.sell_score != null ? n(latestDecision.sell_score) : null;
+          const breakdown = typeof latestDecision.cts_breakdown === "string"
+            ? JSON.parse(latestDecision.cts_breakdown)
+            : latestDecision.cts_breakdown;
+          aiSellScore = breakdown?.meta?.sellScore != null ? n(breakdown.meta.sellScore) : null;
         }
       }
 
@@ -248,6 +251,7 @@ export async function reconcileFilledOrders(userId: string) {
     }
 
     let positionWriteFailed = false;
+    let sellEntryPrice: number | null = null;
 
     if (order.auto_stock_id && order.side === "buy") {
       const { data: existingPosition } = await supabaseAdmin
@@ -336,6 +340,7 @@ export async function reconcileFilledOrders(userId: string) {
             .maybeSingle();
 
         if (existingPosition) {
+            sellEntryPrice = n(existingPosition.entry_price) || null;
             const remainingShares =
                 Number(existingPosition.shares) - Number(order.filled_qty);
 
@@ -399,10 +404,17 @@ export async function reconcileFilledOrders(userId: string) {
       }
     }
 
+    const pnlPercentForDecision =
+      order.side === "sell" && sellEntryPrice && sellEntryPrice > 0
+        ? ((price - sellEntryPrice) / sellEntryPrice) * 100
+        : null;
+
     await supabaseAdmin
       .from("ai_decisions")
       .update({
         broker_order_id: brokerOrderId,
+        price,
+        pnl_percent: pnlPercentForDecision,
       })
       .eq("user_id", userId)
       .eq("auto_stock_id", order.auto_stock_id)
