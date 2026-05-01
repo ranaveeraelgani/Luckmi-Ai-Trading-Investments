@@ -43,7 +43,7 @@ export default function LoginClient() {
     setError('');
     setInfo('');
 
-    const { error: signUpError } = await supabase.auth.signUp({
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
     });
@@ -51,6 +51,18 @@ export default function LoginClient() {
     if (signUpError) {
       setError(signUpError.message);
     } else {
+      // Auto-create a Free subscription row for the new user
+      if (signUpData?.user?.id) {
+        try {
+          await fetch('/api/subscription/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: signUpData.user.id }),
+          });
+        } catch {
+          // Non-fatal — subscription row can be created later
+        }
+      }
       setInfo('Check your email for the confirmation link.');
     }
 

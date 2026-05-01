@@ -1,5 +1,5 @@
 import { createClient } from '@/app/lib/supabaseServer';
-import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/getEntitlements';
+import { getEntitlements, isEnforcedForUser } from '@/app/lib/subscriptions/getEntitlements';
 
 export async function GET() {
   const supabase = await createClient();
@@ -19,7 +19,7 @@ export async function GET() {
 
   return Response.json({
     ...entitlements,
-    enforced: subscriptionsEnforced(),
+    enforced: isEnforcedForUser(entitlements),
     subscription_enabled: subscriptionEnabled,
   });
 }

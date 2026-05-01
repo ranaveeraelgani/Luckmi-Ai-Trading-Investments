@@ -1,7 +1,7 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { decrypt } from '@/app/lib/crypto/encrypt';
-import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/getEntitlements';
+import { getEntitlements, isEnforcedForUser } from '@/app/lib/subscriptions/getEntitlements';
 
 export async function POST() {
   try {
@@ -17,7 +17,7 @@ export async function POST() {
 
     const entitlements = await getEntitlements(user.id);
 
-    if (subscriptionsEnforced() && !entitlements.allowBrokerConnect) {
+    if (isEnforcedForUser(entitlements) && !entitlements.allowBrokerConnect) {
       return Response.json(
         {
           success: false,

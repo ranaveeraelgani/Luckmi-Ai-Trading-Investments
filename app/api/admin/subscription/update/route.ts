@@ -37,7 +37,18 @@ export async function POST(req: Request) {
           allowBrokerConnect,
           allowAdvancedAnalytics,
           enginePaused,
+          isTestUser,
       } = body;
+
+    // Update test user flag on profile if provided
+    if (typeof isTestUser === 'boolean') {
+      const { error: profileUpdateError } = await supabaseAdmin
+        .from('profiles')
+        .update({ is_test_user: isTestUser })
+        .eq('user_id', targetUserId);
+
+      if (profileUpdateError) throw profileUpdateError;
+    }
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from('subscriptions')

@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
-import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/getEntitlements';
+import { getEntitlements, isEnforcedForUser } from '@/app/lib/subscriptions/getEntitlements';
 import { insertEngineRun } from '@/app/lib/db/engineRuns';
 import { createClient } from '@/app/lib/supabaseServer';
 export async function POST(req: Request) {
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
         if (countError) throw countError;
 
-        if (subscriptionsEnforced() && (count || 0) >= entitlements.maxAutoStocks) {
+        if (isEnforcedForUser(entitlements) && (count || 0) >= entitlements.maxAutoStocks) {
             return Response.json(
                 {
                     success: false,

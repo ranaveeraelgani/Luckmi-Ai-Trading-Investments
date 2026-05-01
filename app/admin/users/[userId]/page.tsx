@@ -4,6 +4,7 @@ import TopNav from "@/components/TopNav";
 import { createClient } from "@/app/lib/supabaseServer";
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 import { AdminRunCycleButton } from "./run-cycle-button";
+import { TestUserToggle } from "./test-user-toggle";
 import CronRunsCard from "@/components/admin/CronRunsCard";
 
 type PageProps = {
@@ -155,7 +156,7 @@ async function getUserDetail(userId: string) {
   ] = await Promise.all([
     supabaseAdmin
       .from("profiles")
-      .select("user_id, email, full_name, plan, is_admin, created_at")
+      .select("user_id, email, full_name, plan, is_admin, is_test_user, created_at")
       .eq("user_id", userId)
       .single(),
 
@@ -349,6 +350,12 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
 
                 <Pill className={planTone(planLabel)}>{planLabel}</Pill>
 
+                {profile.is_test_user ? (
+                  <Pill className="border-violet-500/30 bg-violet-500/10 text-violet-300">
+                    Test User
+                  </Pill>
+                ) : null}
+
                 <Pill className={cardTone(broker?.connection_status || "unknown")}>
                   Broker: {broker?.connection_status || "unknown"}
                 </Pill>
@@ -438,6 +445,14 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
                     <Pill className={planTone(planLabel)}>{planLabel}</Pill>
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-[#1a1f2e] p-4">
+                <div className="mb-2 text-xs text-gray-400">Test User Access</div>
+                <TestUserToggle userId={userId} initialValue={!!profile.is_test_user} />
+                <p className="mt-2 text-xs text-gray-500">
+                  Toggling this on gives the user unlimited access to all features regardless of their plan, even after enforcement goes live.
+                </p>
               </div>
 
               {subscription ? (

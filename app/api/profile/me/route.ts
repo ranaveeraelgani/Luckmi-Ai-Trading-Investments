@@ -1,6 +1,6 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
-import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/getEntitlements';
+import { getEntitlements, isEnforcedForUser } from '@/app/lib/subscriptions/getEntitlements';
 
 export async function GET() {
   try {
@@ -18,7 +18,7 @@ export async function GET() {
       await Promise.all([
         supabaseAdmin
           .from('profiles')
-          .select('full_name, email, created_at, is_admin')
+          .select('full_name, email, created_at, is_admin, is_test_user')
           .eq('user_id', user.id)
           .maybeSingle(),
 
@@ -71,10 +71,11 @@ export async function GET() {
         email: profile?.email || user.email || '',
         createdAt: profile?.created_at || null,
         isAdmin: !!profile?.is_admin,
+        isTestUser: !!profile?.is_test_user,
       },
       subscription: {
         ...subscription,
-        enforced: subscriptionsEnforced(),
+        enforced: isEnforcedForUser(subscription),
       },
       summary: {
         autoStocks: autoStocksCount || 0,

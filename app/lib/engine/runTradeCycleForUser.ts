@@ -2,7 +2,7 @@ import { runTradingEngine } from '@/app/lib/engine/runTradingEngine';
 import { upsertPosition, deletePosition } from '@/app/lib/db/positions';
 import { insertAiDecision } from '@/app/lib/db/aiDecisions';
 import { insertEngineRun } from '@/app/lib/db/engineRuns';
-import { getEntitlements, subscriptionsEnforced } from '@/app/lib/subscriptions/getEntitlements';
+import { getEntitlements, isEnforcedForUser } from '@/app/lib/subscriptions/getEntitlements';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { acquireEngineLock, releaseEngineLock } from "@/app/lib/engine/helpers/engine-locks";
 import { getManualCooldownSeconds, getRemainingManualCooldownSeconds} from "@/app/lib/engine/helpers/manual-cooldown";
@@ -302,7 +302,7 @@ export async function runTradeCycleForUser({
       };
     }
 
-    if (!bypassPlanChecks && subscriptionsEnforced()) {
+    if (!bypassPlanChecks && isEnforcedForUser(entitlements)) {
       if (runType === "manual" && !entitlements.allowManualCycle) {
         await insertEngineRun({
           userId,
