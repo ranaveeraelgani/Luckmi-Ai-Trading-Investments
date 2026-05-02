@@ -6,6 +6,7 @@ import {
   markEngineJobSucceeded,
 } from '@/app/lib/engine/jobQueue';
 import { runTradeCycleForUserIds } from '@/app/lib/engine/runTradeCycleForAllUsers';
+import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 
 export const maxDuration = 60;
 
@@ -25,6 +26,10 @@ export async function POST(req: Request) {
   const auth = req.headers.get('authorization');
   if (auth !== `Bearer ${process.env.ENGINE_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  if (!(await isMarketOpenNowLive())) {
+    return NextResponse.json({ skipped: true, reason: 'Market closed' });
   }
 
   try {

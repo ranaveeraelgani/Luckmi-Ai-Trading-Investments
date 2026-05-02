@@ -109,27 +109,29 @@ export async function syncAlpacaForUser(userId: string) {
   }
 
   for (const order of orders || []) {
-    await supabaseAdmin.from("broker_orders").upsert(
-      {
-        user_id: userId,
-        broker: "alpaca",
-        broker_order_id: order.id,
-        client_order_id: order.client_order_id,
-        symbol: order.symbol,
-        side: order.side,
-        qty: n(order.qty),
-        order_type: order.order_type || order.type,
-        time_in_force: order.time_in_force,
-        status: order.status,
-        submitted_at: order.submitted_at,
-        filled_at: order.filled_at,
-        filled_qty: n(order.filled_qty),
-        filled_avg_price: n(order.filled_avg_price),
-        raw_order: order,
-        updated_at: now,
-      },
-      { onConflict: "client_order_id" }
-    );
+    const upsertPayload: Record<string, any> = {
+      user_id: userId,
+      broker: "alpaca",
+      broker_order_id: order.id,
+      client_order_id: order.client_order_id,
+      symbol: order.symbol,
+      side: order.side,
+      qty: n(order.qty),
+      order_type: order.order_type || order.type,
+      time_in_force: order.time_in_force,
+      status: order.status,
+      submitted_at: order.submitted_at,
+      filled_qty: n(order.filled_qty),
+      filled_avg_price: n(order.filled_avg_price),
+      raw_order: order,
+      updated_at: now,
+    };
+    // Only include filled_at if Alpaca returned a value — never overwrite a real
+    // fill timestamp with null (race condition between order placement and fill).
+    if (order.filled_at != null) {
+      upsertPayload.filled_at = order.filled_at;
+    }
+    await supabaseAdmin.from("broker_orders").upsert(upsertPayload, { onConflict: "client_order_id" });
   }
 
     return {
