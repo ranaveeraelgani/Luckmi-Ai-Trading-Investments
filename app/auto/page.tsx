@@ -510,6 +510,18 @@ export default function AutoTradingPage() {
     }, 0);
   }, [autoStocks, quotes]);
 
+  const totalRealized = useMemo(() => {
+    return Object.values(tradeHistory).reduce((sum, trades) => {
+      return (
+        sum +
+        trades.reduce((inner, trade) => {
+          const pnl = Number(trade?.pnl);
+          return inner + (Number.isFinite(pnl) ? pnl : 0);
+        }, 0)
+      );
+    }, 0);
+  }, [tradeHistory]);
+
   const totalTrades = useMemo(
     () => Object.values(tradeHistory).reduce((sum, arr) => sum + arr.length, 0),
     [tradeHistory]
@@ -720,10 +732,14 @@ export default function AutoTradingPage() {
                     <div className="mt-1 flex flex-wrap items-center gap-3">
                       <span className="text-sm font-semibold text-white">{formatMoney(totalAllocation)}</span>
                       <span className="text-xs text-gray-500">allocation</span>
+                      <span className={`text-sm font-semibold ${pnlClass(totalRealized)}`}>
+                        {totalRealized >= 0 ? "+" : ""}{formatMoney(totalRealized)}
+                      </span>
+                      <span className="text-xs text-gray-500">realized</span>
                       <span className={`text-sm font-semibold ${pnlClass(totalUnrealized)}`}>
                         {totalUnrealized >= 0 ? "+" : ""}{formatMoney(totalUnrealized)}
                       </span>
-                      <span className="text-xs text-gray-500">P&L</span>
+                      <span className="text-xs text-gray-500">unrealized</span>
                     </div>
                   ) : (
                     <p className="mt-1 text-sm text-gray-400">Allocation health and unrealized performance at a glance.</p>
@@ -739,6 +755,12 @@ export default function AutoTradingPage() {
                       <div>
                         <div className="text-sm text-gray-400">Total Allocation</div>
                         <div className="mt-1 text-2xl font-semibold text-white">{formatMoney(totalAllocation)}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm text-gray-400">Realized P&L</div>
+                        <div className={`mt-1 text-2xl font-semibold ${pnlClass(totalRealized)}`}>
+                          {totalRealized >= 0 ? "+" : ""}{formatMoney(totalRealized)}
+                        </div>
                       </div>
                       <div className="text-right">
                         <div className="text-sm text-gray-400">Unrealized P&L</div>
@@ -986,9 +1008,8 @@ export default function AutoTradingPage() {
                           valueClassName={pnlClass(pnl)}
                         />
                         <MiniMetric
-                          label="Decision"
-                          value={ai?.action || "—"}
-                          valueClassName="text-[#F5C76E]"
+                          label="Avg Price"
+                          value={entry ? formatMoney(entry) : "—"}
                         />
                       </div>
                     </div>

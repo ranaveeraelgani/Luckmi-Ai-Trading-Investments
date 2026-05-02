@@ -18,7 +18,7 @@ export async function GET() {
       await Promise.all([
         supabaseAdmin
           .from('profiles')
-          .select('full_name, email, created_at, is_admin, is_test_user')
+          .select('full_name, email, phone, created_at, is_admin, is_test_user')
           .eq('user_id', user.id)
           .maybeSingle(),
 
@@ -65,10 +65,19 @@ export async function GET() {
     const realizedPnL =
       (trades || []).reduce((sum: number, t: any) => sum + Number(t.pnl || 0), 0);
 
+    const metadataFirstName = String(user.user_metadata?.first_name || '').trim();
+    const metadataLastName = String(user.user_metadata?.last_name || '').trim();
+    const metadataFullName =
+      String(user.user_metadata?.full_name || '').trim() ||
+      [metadataFirstName, metadataLastName].filter(Boolean).join(' ').trim() ||
+      String(user.user_metadata?.name || '').trim();
+    const metadataPhone = String(user.user_metadata?.phone || '').trim();
+
     return Response.json({
       profile: {
-        fullName: profile?.full_name || '',
+        fullName: profile?.full_name || metadataFullName || '',
         email: profile?.email || user.email || '',
+        phone: profile?.phone || metadataPhone || '',
         createdAt: profile?.created_at || null,
         isAdmin: !!profile?.is_admin,
         isTestUser: !!profile?.is_test_user,

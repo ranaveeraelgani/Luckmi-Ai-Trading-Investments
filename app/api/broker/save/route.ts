@@ -16,6 +16,7 @@ export async function POST(req: Request) {
     }
 
     const profileEmail = user.email || null;
+    const profilePhone = String(user.user_metadata?.phone || '').trim() || null;
     const profileName =
       (user.user_metadata?.full_name as string | undefined) ||
       (user.user_metadata?.name as string | undefined) ||
@@ -28,6 +29,7 @@ export async function POST(req: Request) {
           user_id: user.id,
           email: profileEmail,
           full_name: profileName,
+          phone: profilePhone,
         },
         { onConflict: 'user_id' }
       );

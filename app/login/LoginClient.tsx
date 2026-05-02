@@ -7,6 +7,9 @@ import { createClient } from '@/utils/supabase';
 import luckmiAppLogo from '@/app/image/logo/luckmi_app_logo.png';
 
 export default function LoginClient() {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,9 +46,29 @@ export default function LoginClient() {
     setError('');
     setInfo('');
 
+    const normalizedFirstName = firstName.trim();
+    const normalizedLastName = lastName.trim();
+    const normalizedPhone = phone.trim();
+
+    if (!normalizedFirstName || !normalizedLastName) {
+      setLoading(false);
+      setError('First name and last name are required to create an account.');
+      return;
+    }
+
+    const fullName = `${normalizedFirstName} ${normalizedLastName}`.trim();
+
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          first_name: normalizedFirstName,
+          last_name: normalizedLastName,
+          full_name: fullName,
+          phone: normalizedPhone || null,
+        },
+      },
     });
 
     if (signUpError) {
@@ -112,6 +135,41 @@ export default function LoginClient() {
         </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">First Name</label>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl text-white focus:outline-none focus:border-blue-500"
+                placeholder="First name"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Last Name</label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl text-white focus:outline-none focus:border-blue-500"
+                placeholder="Last name"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Phone (optional)</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full px-4 py-3 bg-[#1a1f2e] border border-gray-700 rounded-2xl text-white focus:outline-none focus:border-blue-500"
+              placeholder="+1 555 123 4567"
+            />
+          </div>
+
           <div>
             <label className="block text-sm text-gray-400 mb-2">Email</label>
             <input

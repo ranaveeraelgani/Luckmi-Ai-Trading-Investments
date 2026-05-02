@@ -39,6 +39,36 @@ export async function POST(req: Request) {
       });
     }
 
+    // Keep profile row in sync from auth metadata on first signup.
+    // This captures first/last name entered at account creation.
+    const { data: authUserData, error: authUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (authUserError) throw authUserError;
+
+    const authUser = authUserData?.user;
+    const profileEmail = authUser?.email || null;
+    const profilePhone = String(authUser?.user_metadata?.phone || '').trim() || null;
+    const firstName = String(authUser?.user_metadata?.first_name || '').trim();
+    const lastName = String(authUser?.user_metadata?.last_name || '').trim();
+    const profileName =
+      String(authUser?.user_metadata?.full_name || '').trim() ||
+      [firstName, lastName].filter(Boolean).join(' ').trim() ||
+      String(authUser?.user_metadata?.name || '').trim() ||
+      profileEmail;
+
+    const { error: profileUpsertError } = await supabaseAdmin
+      .from('profiles')
+      .upsert(
+        {
+          user_id: userId,
+          email: profileEmail,
+          full_name: profileName,
+          phone: profilePhone,
+        },
+        { onConflict: 'user_id' }
+      );
+
+    if (profileUpsertError) throw profileUpsertError;
+
     // Resolve Free plan entitlements from the DB (respects any admin price/config changes)
     const freePlan = await getPlanFromDb('free');
 
