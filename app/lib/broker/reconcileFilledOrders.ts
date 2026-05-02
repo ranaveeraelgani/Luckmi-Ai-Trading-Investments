@@ -14,6 +14,18 @@ function isFilled(order: any) {
   );
 }
 
+function parseRawOrder(raw: any) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return raw;
+}
+
 async function repairOpenPositionsFromBroker(userId: string) {
   const { data: brokerPositions, error: brokerPositionsError } = await supabaseAdmin
     .from("broker_positions")
@@ -146,6 +158,12 @@ export async function reconcileFilledOrders(userId: string) {
 
   for (const order of filledOrders) {
     const brokerOrderId = order.broker_order_id;
+    const parsedRawOrder = parseRawOrder(order.raw_order);
+    const aiDecisionIdFromIntent =
+      parsedRawOrder?.trade_intent?.aiDecisionId != null
+        ? String(parsedRawOrder.trade_intent.aiDecisionId)
+        : null;
+    let linkedAiDecisionId: string | null = aiDecisionIdFromIntent;
 
     if (!brokerOrderId) continue;
 
@@ -183,19 +201,42 @@ export async function reconcileFilledOrders(userId: string) {
       let aiSellScore: number | null = null;
 
       if (order.auto_stock_id) {
-        const actionFilter = order.side === "buy"
-          ? ["Buy", "Buy More"]
-          : ["Sell", "Partial Sell"];
+        let latestDecision: any = null;
 
-        const { data: latestDecision } = await supabaseAdmin
-          .from("ai_decisions")
-          .select("reason, confidence, cts_score, cts_breakdown")
-          .eq("user_id", userId)
-          .eq("auto_stock_id", order.auto_stock_id)
-          .in("action", actionFilter)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        if (aiDecisionIdFromIntent) {
+          const { data: linkedDecision } = await supabaseAdmin
+            .from("ai_decisions")
+            .select("id, reason, confidence, cts_score, cts_breakdown")
+            .eq("id", aiDecisionIdFromIntent)
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          if (linkedDecision?.id) {
+            latestDecision = linkedDecision;
+            linkedAiDecisionId = String(linkedDecision.id);
+          }
+        }
+
+        if (!latestDecision) {
+          const actionFilter = order.side === "buy"
+            ? ["Buy", "Buy More"]
+            : ["Sell", "Partial Sell"];
+
+          const { data: fallbackDecision } = await supabaseAdmin
+            .from("ai_decisions")
+            .select("id, reason, confidence, cts_score, cts_breakdown")
+            .eq("user_id", userId)
+            .eq("auto_stock_id", order.auto_stock_id)
+            .in("action", actionFilter)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          latestDecision = fallbackDecision;
+          if (fallbackDecision?.id) {
+            linkedAiDecisionId = String(fallbackDecision.id);
+          }
+        }
 
         if (latestDecision) {
           aiReason = latestDecision.reason || null;
@@ -409,16 +450,28 @@ export async function reconcileFilledOrders(userId: string) {
         ? ((price - sellEntryPrice) / sellEntryPrice) * 100
         : null;
 
-    await supabaseAdmin
-      .from("ai_decisions")
-      .update({
-        broker_order_id: brokerOrderId,
-        price,
-        pnl_percent: pnlPercentForDecision,
-      })
-      .eq("user_id", userId)
-      .eq("auto_stock_id", order.auto_stock_id)
-      .is("broker_order_id", null);
+    if (linkedAiDecisionId) {
+      await supabaseAdmin
+        .from("ai_decisions")
+        .update({
+          broker_order_id: brokerOrderId,
+          price,
+          pnl_percent: pnlPercentForDecision,
+        })
+        .eq("id", linkedAiDecisionId)
+        .eq("user_id", userId);
+    } else {
+      await supabaseAdmin
+        .from("ai_decisions")
+        .update({
+          broker_order_id: brokerOrderId,
+          price,
+          pnl_percent: pnlPercentForDecision,
+        })
+        .eq("user_id", userId)
+        .eq("auto_stock_id", order.auto_stock_id)
+        .is("broker_order_id", null);
+    }
 
     if (positionWriteFailed) {
       continue;

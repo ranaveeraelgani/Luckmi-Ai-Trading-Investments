@@ -60,7 +60,10 @@ export async function placeAutoBrokerOrder({
     filled_at: order.filled_at,
     filled_qty: order.filled_qty,
     filled_avg_price: order.filled_avg_price,
-    raw_order: order,
+    raw_order: {
+      ...order,
+      trade_intent: tradeIntent ?? null,
+    },
   });
 
   await syncAlpacaForUser(userId);

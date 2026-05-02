@@ -10,6 +10,8 @@ import { executeBrokerTradesForUser } from "@/app/lib/broker/executeBrokerTrades
 import { getBrokerExecutionMode } from "@/app/lib/broker/getBrokerExecutionMode";
 import { reconcileFilledOrders } from "@/app/lib/broker/reconcileFilledOrders";
 import { clearPendingMarketCycleJobsForUser } from '@/app/lib/engine/jobQueue';
+import { getMarketRegime } from '@/app/lib/engine/helpers/getMarketRegime';
+import { getEarningsRiskSymbols } from '@/app/lib/engine/helpers/getEarningsRisk';
 
 export type TradeCycleRunType = 'manual' | 'cron' | 'admin';
 
@@ -71,6 +73,7 @@ async function persistAiDecisionDailyAware({
   if (!stock.lastAiDecision) return;
 
   const payload = {
+    id: stock.lastAiDecision.id ?? undefined,
     user_id: userId,
     auto_stock_id: stock.id,
     symbol: stock.symbol,
@@ -79,6 +82,10 @@ async function persistAiDecisionDailyAware({
     confidence: stock.lastAiDecision.confidence ?? null,
     cts_score: stock.lastAiDecision.ctsScore ?? null,
     cts_breakdown: stock.lastAiDecision.ctsBreakdown ?? null,
+    created_at:
+      stock.lastAiDecision.timestamp instanceof Date
+        ? stock.lastAiDecision.timestamp.toISOString()
+        : stock.lastAiDecision.timestamp ?? undefined,
   };
 
   // Hold decisions should be at most one row per stock per UTC day.
@@ -142,6 +149,7 @@ async function saveEngineResults({
         last_sell_time: stock.lastSellTime ?? null,
         last_evaluated_price: stock.lastEvaluatedPrice ?? null,
         repeat_counter: stock.repeat_counter ?? stock.repeatCounter ?? undefined,
+        reentry_cooldown_until: stock.reentryCooldownUntil ?? null,
       })
       .eq("id", stock.id)
       .eq("user_id", userId);
@@ -187,10 +195,13 @@ async function saveEngineResults({
 
   if (trades.length > 0) {
     await supabase.from("trades").insert(
-      trades.map((trade: any) => ({
-        ...trade,
-        user_id: userId,
-      }))
+      trades.map((trade: any) => {
+        const { ai_decision_id, ...tradeForDb } = trade;
+        return {
+          ...tradeForDb,
+          user_id: userId,
+        };
+      })
     );
   }
 }
@@ -213,6 +224,7 @@ export async function saveEngineStateOnly({
         last_evaluated_price: stock.lastEvaluatedPrice ?? null,
         repeat_counter: stock.repeat_counter ?? stock.repeatCounter ?? undefined,
         last_sell_time: stock.lastSellTime ?? null,
+        reentry_cooldown_until: stock.reentryCooldownUntil ?? null,
       })
       .eq("id", stock.id)
       .eq("user_id", userId);
@@ -426,6 +438,11 @@ export async function runTradeCycleForUser({
       const position = positionByStockId.get(String(stock.id));
       return {
         ...stock,
+        // Explicit camelCase mappings so engine can read them reliably
+        lastSellTime: stock.last_sell_time ?? null,
+        lastEvaluatedPrice: stock.last_evaluated_price ?? null,
+        lastAiDecision: stock.last_ai_decision ?? null,
+        reentryCooldownUntil: stock.reentry_cooldown_until ?? null,
         currentPosition: position
           ? {
               entryPrice: Number(position.entry_price) || 0,
@@ -466,9 +483,27 @@ export async function runTradeCycleForUser({
       eligibleStocks.map((s: any) => s.symbol)
     );
 
+    // =========================
+    // 🌐 MARKET REGIME GATE
+    // Fetch SPY CTS once — raises entry score threshold for all stocks
+    // when the index is in a choppy or bearish state.
+    // =========================
+    const marketRegime = await getMarketRegime();
+
+    // =========================
+    // 📅 EARNINGS RISK GATE
+    // Only check stocks not already in-position (don't force exits for earnings).
+    // =========================
+    const nonPositionSymbols = eligibleStocks
+      .filter((s: any) => s.status !== 'in-position')
+      .map((s: any) => s.symbol as string);
+
+    const earningsRiskSet = await getEarningsRiskSymbols(nonPositionSymbols);
+
     const { updatedStocks, trades, hasChanges } = await runTradingEngine(
       eligibleStocks,
-      quotes
+      quotes,
+      { marketRegime, earningsRiskSet }
     );
 
     const needsBrokerExecution = trades.length > 0;

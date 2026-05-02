@@ -6,6 +6,7 @@ type BrokerSide = "buy" | "sell";
 
 type EngineTrade = {
   id?: string;
+  ai_decision_id?: string;
   auto_stock_id?: string;
   autoStockId?: string;
   user_id?: string;
@@ -159,6 +160,7 @@ export async function executeBrokerTradesForUser({
         appTradeLabel: getAppTradeLabel(trade.type),
         tradeIntent: {
           engineTradeId: trade.id || null,
+          aiDecisionId: trade.ai_decision_id || null,
           appTradeType: trade.type,
           appTradeLabel: getAppTradeLabel(trade.type),
           symbol: validated.symbol,

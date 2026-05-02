@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sweep:buy-threshold": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs",
+    "sweep:buy-threshold:all": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs --min 50 --max 70 --step 1 --windowDays 3",
+    "sweep:buy-threshold:buyscore": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs --scoreField buy_score --min 45 --max 80 --step 1 --windowDays 3"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
