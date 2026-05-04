@@ -729,17 +729,23 @@ export default function AutoTradingPage() {
                 <div className="text-left">
                   <h2 className="text-lg font-semibold text-white">Auto Portfolio Summary</h2>
                   {portfolioCollapsed ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-3">
-                      <span className="text-sm font-semibold text-white">{formatMoney(totalAllocation)}</span>
-                      <span className="text-xs text-gray-500">allocation</span>
-                      <span className={`text-sm font-semibold ${pnlClass(totalRealized)}`}>
-                        {totalRealized >= 0 ? "+" : ""}{formatMoney(totalRealized)}
-                      </span>
-                      <span className="text-xs text-gray-500">realized</span>
-                      <span className={`text-sm font-semibold ${pnlClass(totalUnrealized)}`}>
-                        {totalUnrealized >= 0 ? "+" : ""}{formatMoney(totalUnrealized)}
-                      </span>
-                      <span className="text-xs text-gray-500">unrealized</span>
+                    <div className="mt-2 grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+                      <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2.5 py-1.5 sm:border-0 sm:bg-transparent sm:p-0">
+                        <div className="truncate text-sm font-semibold text-white">{formatMoney(totalAllocation)}</div>
+                        <div className="text-[11px] uppercase tracking-wide text-gray-500">allocation</div>
+                      </div>
+                      <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2.5 py-1.5 sm:border-0 sm:bg-transparent sm:p-0">
+                        <div className={`truncate text-sm font-semibold ${pnlClass(totalRealized)}`}>
+                          {totalRealized >= 0 ? "+" : ""}{formatMoney(totalRealized)}
+                        </div>
+                        <div className="text-[11px] uppercase tracking-wide text-gray-500">realized</div>
+                      </div>
+                      <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2.5 py-1.5 sm:border-0 sm:bg-transparent sm:p-0">
+                        <div className={`truncate text-sm font-semibold ${pnlClass(totalUnrealized)}`}>
+                          {totalUnrealized >= 0 ? "+" : ""}{formatMoney(totalUnrealized)}
+                        </div>
+                        <div className="text-[11px] uppercase tracking-wide text-gray-500">unrealized</div>
+                      </div>
                     </div>
                   ) : (
                     <p className="mt-1 text-sm text-gray-400">Allocation health and unrealized performance at a glance.</p>
