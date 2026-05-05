@@ -5,6 +5,12 @@
 		},
 		"app/api/cron/engine-jobs-drain/route.ts": {
 			"maxDuration": 60
+		},
+		"app/api/cron/options-cycle/route.ts": {
+			"maxDuration": 60
+		},
+		"app/api/cron/options-jobs-drain/route.ts": {
+			"maxDuration": 60
 		}
 	}
 }

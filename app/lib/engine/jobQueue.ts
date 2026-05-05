@@ -112,6 +112,51 @@ export async function markEngineJobFailed(jobId: string, message: string) {
   }
 }
 
+// ── Options-cycle queue helpers ───────────────────────────────────────────────
+
+export const OPTIONS_CYCLE_JOB_NAME = 'options-cycle-trade';
+
+/**
+ * Enqueues one job per open trade ID, skipping trades that already have a
+ * pending or processing job (idempotent — safe to call every 15 min).
+ */
+export async function enqueueOptionsCycleJobs(tradeIds: string[]) {
+  if (tradeIds.length === 0) return { enqueued: 0, skipped: 0 };
+
+  const deduped = [...new Set(tradeIds.filter(Boolean))];
+
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from('engine_jobs')
+    .select('payload')
+    .eq('job_name', OPTIONS_CYCLE_JOB_NAME)
+    .in('status', ['pending', 'processing']);
+
+  if (existingError) throw existingError;
+
+  const activeTradeIds = new Set(
+    (existing ?? [])
+      .map((r: any) => r?.payload?.tradeId as string | undefined)
+      .filter(Boolean),
+  );
+
+  const toEnqueue = deduped.filter((id) => !activeTradeIds.has(id));
+
+  if (toEnqueue.length > 0) {
+    const { error: insertError } = await supabaseAdmin
+      .from('engine_jobs')
+      .insert(
+        toEnqueue.map((tradeId) => ({
+          job_name: OPTIONS_CYCLE_JOB_NAME,
+          status: 'pending',
+          payload: { tradeId },
+        })),
+      );
+    if (insertError) throw insertError;
+  }
+
+  return { enqueued: toEnqueue.length, skipped: deduped.length - toEnqueue.length };
+}
+
 export async function clearPendingMarketCycleJobsForUser(userId: string) {
   const { error } = await supabaseAdmin
     .from('engine_jobs')

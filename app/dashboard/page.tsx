@@ -126,6 +126,16 @@ export default function DashboardPage() {
               href="/reports"
             />
             <Card
+              title={
+                <span className="inline-flex items-center gap-2">
+                  <span>📊</span>
+                  <span>Options</span>
+                </span>
+              }
+              subtitle="Ranked debit spread setups scored by flow, GEX, IV fit, and execution quality."
+              href="/options"
+            />
+            <Card
               title="Alpaca Broker"
               subtitle="Connect your Alpaca account for paper trading and live trading."
               href="/alpaca"

@@ -1,0 +1,347 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/app/lib/supabaseServer";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface PaperTradeInsert {
+  symbol: string;
+  direction: "bullish" | "bearish";
+  strategy: "call_debit_spread" | "put_debit_spread";
+  long_strike?: number | null;
+  long_expiry?: string | null;
+  short_strike?: number | null;
+  short_expiry?: string | null;
+  option_type?: "call" | "put" | null;
+  net_debit: number;
+  max_gain?: number | null;
+  max_loss?: number | null;
+  entry_score?: number | null;
+  entry_spot_price?: number | null;
+  broker_order_id?: string | null; // reserved for auto-layer / Alpaca bridge
+  notes?: string | null;
+}
+
+interface PaperTradeClose {
+  id: string;
+  exit_price: number;
+}
+
+interface PaperTradePeakUpdate {
+  id: string;
+  current_value: number;   // current estimated spread value (per share)
+  max_gain: number;        // max_gain of the trade (per share)
+  max_loss: number;        // max_loss of the trade (per share)
+  net_debit: number;       // entry cost (per share)
+  // trail-stop params (from user prefs)
+  hard_loss_stop_pct: number;
+  profit_trail_activation_pct: number;
+  profit_trail_distance_pct: number;
+}
+
+// ─── Trail-stop evaluation ────────────────────────────────────────────────────
+// Returns { shouldClose: boolean; exitReason: string | null }
+function evaluateTrailStop(params: {
+  currentPnl: number;      // current unrealized P&L (per share × 100)
+  peakPnl: number;         // highest P&L ever recorded (per share × 100)
+  maxGain: number;         // per share
+  maxLoss: number;         // per share
+  hardLossStopPct: number;
+  trailActivationPct: number;
+  trailDistancePct: number;
+}): { shouldClose: boolean; exitReason: string | null } {
+  const { currentPnl, peakPnl, maxGain, maxLoss,
+          hardLossStopPct, trailActivationPct, trailDistancePct } = params;
+
+  const maxGainDollars = maxGain * 100;
+  const maxLossDollars = maxLoss * 100;
+
+  // 1. Hard loss stop — always checked first
+  const lossThreshold = -(maxLossDollars * hardLossStopPct / 100);
+  if (currentPnl <= lossThreshold) {
+    return { shouldClose: true, exitReason: `hard-loss-stop-${hardLossStopPct}pct` };
+  }
+
+  // 2. Trail profit stop — only active once peak crosses activation threshold
+  const activationDollars = maxGainDollars * trailActivationPct / 100;
+  if (peakPnl >= activationDollars) {
+    const trailFloor = peakPnl - (maxGainDollars * trailDistancePct / 100);
+    if (currentPnl < trailFloor) {
+      return { shouldClose: true, exitReason: `trail-stop-from-peak` };
+    }
+  }
+
+  return { shouldClose: false, exitReason: null };
+}
+
+// ─── GET — list open paper trades for current user ────────────────────────────
+
+export async function GET() {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data, error } = await supabase
+      .from("option_paper_trades")
+      .select(
+        `id, symbol, direction, strategy, long_strike, long_expiry,
+         short_strike, short_expiry, option_type, net_debit, max_gain,
+         max_loss, entry_score, entry_spot_price, status,
+         entry_at, exit_at, exit_price, pnl, broker_order_id, notes`
+      )
+      .eq("user_id", user.id)
+      .order("entry_at", { ascending: false });
+
+    if (error) {
+      console.error("[paper-trade] GET error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ trades: data ?? [] });
+  } catch (err: any) {
+    console.error("[paper-trade] GET exception:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+// ─── POST — save a new paper trade ───────────────────────────────────────────
+
+export async function POST(req: Request) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let body: PaperTradeInsert;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    // Required field validation
+    if (!body.symbol || typeof body.symbol !== "string") {
+      return NextResponse.json({ error: "symbol is required" }, { status: 400 });
+    }
+    if (!["bullish", "bearish"].includes(body.direction)) {
+      return NextResponse.json({ error: "direction must be bullish or bearish" }, { status: 400 });
+    }
+    if (!["call_debit_spread", "put_debit_spread"].includes(body.strategy)) {
+      return NextResponse.json({ error: "invalid strategy" }, { status: 400 });
+    }
+    if (typeof body.net_debit !== "number" || !Number.isFinite(body.net_debit) || body.net_debit <= 0) {
+      return NextResponse.json({ error: "net_debit must be a positive number" }, { status: 400 });
+    }
+
+    const insert = {
+      user_id: user.id,
+      symbol: body.symbol.toUpperCase().trim(),
+      direction: body.direction,
+      strategy: body.strategy,
+      long_strike: body.long_strike ?? null,
+      long_expiry: body.long_expiry ?? null,
+      short_strike: body.short_strike ?? null,
+      short_expiry: body.short_expiry ?? null,
+      option_type: body.option_type ?? null,
+      net_debit: body.net_debit,
+      max_gain: body.max_gain ?? null,
+      max_loss: body.max_loss ?? null,
+      entry_score: body.entry_score ?? null,
+      entry_spot_price: body.entry_spot_price ?? null,
+      broker_order_id: body.broker_order_id ?? null,
+      notes: body.notes ?? null,
+      status: "open",
+    };
+
+    const { data, error } = await supabase
+      .from("option_paper_trades")
+      .insert(insert)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[paper-trade] POST error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ trade: data }, { status: 201 });
+  } catch (err: any) {
+    console.error("[paper-trade] POST exception:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+// ─── PATCH — close a trade OR update peak_pnl (auto-layer scan cycle) ─────────
+
+export async function PATCH(req: Request) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    if (!body.id || typeof body.id !== "string") {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    // ── Mode A: manual close ──────────────────────────────────────────────────
+    if (body.exit_price != null) {
+      const exitPrice = Number(body.exit_price);
+      if (!Number.isFinite(exitPrice)) {
+        return NextResponse.json({ error: "exit_price must be a number" }, { status: 400 });
+      }
+
+      const { data: existing, error: fetchError } = await supabase
+        .from("option_paper_trades")
+        .select("id, user_id, net_debit, status")
+        .eq("id", body.id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (fetchError || !existing) {
+        return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+      }
+      if (existing.status === "closed") {
+        return NextResponse.json({ error: "Trade is already closed" }, { status: 409 });
+      }
+
+      // P&L = (exit_price - net_debit) × 100  (1 contract = 100 shares)
+      const pnl = (exitPrice - existing.net_debit) * 100;
+
+      const { data: updated, error: updateError } = await supabase
+        .from("option_paper_trades")
+        .update({
+          status: "closed",
+          exit_price: exitPrice,
+          exit_at: new Date().toISOString(),
+          pnl,
+        })
+        .eq("id", body.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error("[paper-trade] PATCH close error:", updateError);
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ trade: updated, action: "closed" });
+    }
+
+    // ── Mode B: scan-cycle peak_pnl update + trail-stop evaluation ───────────
+    if (body.current_value != null) {
+      const b = body as unknown as PaperTradePeakUpdate;
+      const currentValue = Number(b.current_value);
+      const netDebit = Number(b.net_debit);
+      const maxGain = Number(b.max_gain);
+      const maxLoss = Number(b.max_loss);
+
+      if (
+        !Number.isFinite(currentValue) || !Number.isFinite(netDebit) ||
+        !Number.isFinite(maxGain) || !Number.isFinite(maxLoss)
+      ) {
+        return NextResponse.json({ error: "current_value, net_debit, max_gain, max_loss are required numbers" }, { status: 400 });
+      }
+
+      const currentPnl = (currentValue - netDebit) * 100;
+
+      // Fetch existing peak_pnl
+      const { data: existing, error: fetchError } = await supabase
+        .from("option_paper_trades")
+        .select("id, user_id, status, peak_pnl, net_debit")
+        .eq("id", body.id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (fetchError || !existing) {
+        return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+      }
+      if (existing.status === "closed") {
+        return NextResponse.json({ trade: existing, action: "already_closed" });
+      }
+
+      const prevPeak = existing.peak_pnl ?? currentPnl;
+      const newPeak = Math.max(prevPeak, currentPnl);
+
+      // Evaluate trail-stop
+      const { shouldClose, exitReason } = evaluateTrailStop({
+        currentPnl,
+        peakPnl: newPeak,
+        maxGain,
+        maxLoss,
+        hardLossStopPct: Number(b.hard_loss_stop_pct) || 50,
+        trailActivationPct: Number(b.profit_trail_activation_pct) || 40,
+        trailDistancePct: Number(b.profit_trail_distance_pct) || 25,
+      });
+
+      if (shouldClose) {
+        const { data: closed, error: closeError } = await supabase
+          .from("option_paper_trades")
+          .update({
+            status: "closed",
+            exit_price: currentValue,
+            exit_at: new Date().toISOString(),
+            pnl: currentPnl,
+            peak_pnl: newPeak,
+          })
+          .eq("id", body.id)
+          .eq("user_id", user.id)
+          .select()
+          .single();
+
+        if (closeError) {
+          console.error("[paper-trade] PATCH trail-close error:", closeError);
+          return NextResponse.json({ error: closeError.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ trade: closed, action: "trail_closed", exitReason });
+      }
+
+      // Not closing — just update peak_pnl
+      const { data: updated, error: updateError } = await supabase
+        .from("option_paper_trades")
+        .update({ peak_pnl: newPeak })
+        .eq("id", body.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error("[paper-trade] PATCH peak update error:", updateError);
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ trade: updated, action: "peak_updated", currentPnl, peakPnl: newPeak });
+    }
+
+    return NextResponse.json({ error: "Provide exit_price (close) or current_value (peak update)" }, { status: 400 });
+  } catch (err: any) {
+    console.error("[paper-trade] PATCH exception:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

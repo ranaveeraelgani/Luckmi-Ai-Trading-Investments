@@ -14,6 +14,7 @@ export const NotificationTypes = [
   'engine_cycle_completed',
   'score_alert',
   'daily_summary',
+  'option_auto_closed',
 ] as const;
 
 export type NotificationType = (typeof NotificationTypes)[number];

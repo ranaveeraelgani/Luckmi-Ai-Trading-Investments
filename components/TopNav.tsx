@@ -30,6 +30,7 @@ const navItems: { label: string; href: string; key: ActivePage }[] = [
   { label: "Watchlist", href: "/watchlist", key: "watchlist" },
   { label: "Portfolio", href: "/portfolio", key: "portfolio" },
   { label: "Auto Trading", href: "/auto", key: "auto" },
+  { label: "Options", href: "/options", key: "options" },
   { label: "Reports", href: "/reports", key: "reports" },
 ];
 

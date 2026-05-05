@@ -14,6 +14,7 @@ function isTypeEnabledByPreference(
   if (type === 'score_alert') return prefs.score_alerts;
   if (type === 'daily_summary') return prefs.daily_summary;
   if (type === 'engine_cycle_completed') return prefs.daily_summary;
+  if (type === 'option_auto_closed') return prefs.trade_alerts;
   return true;
 }
 
