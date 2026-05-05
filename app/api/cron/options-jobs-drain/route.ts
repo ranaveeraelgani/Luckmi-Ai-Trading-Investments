@@ -68,6 +68,8 @@ export async function POST(req: Request) {
     let peakUpdated = 0;
     let priceUnavailable = 0;
     let skipped = 0;
+    let skippedAutoExitDisabled = 0;
+    let skippedOther = 0;
     let errors = 0;
 
     for (const job of jobs) {
@@ -88,7 +90,15 @@ export async function POST(req: Request) {
           case 'closed':          closed++;           break;
           case 'peak_updated':    peakUpdated++;      break;
           case 'price_unavailable': priceUnavailable++; break;
-          case 'skipped':         skipped++;          break;
+          case 'skipped': {
+            skipped++;
+            if (outcome.reason === 'auto exits disabled by user') {
+              skippedAutoExitDisabled++;
+            } else {
+              skippedOther++;
+            }
+            break;
+          }
         }
       } catch (err: any) {
         const message = err?.message ?? 'Unknown error';
@@ -101,7 +111,8 @@ export async function POST(req: Request) {
     console.info(
       `[options-jobs-drain] batch done claimed=${jobs.length} ` +
         `closed=${closed} peakUpdated=${peakUpdated} ` +
-        `priceUnavailable=${priceUnavailable} skipped=${skipped} errors=${errors}`,
+        `priceUnavailable=${priceUnavailable} skipped=${skipped} ` +
+        `skippedAutoExitDisabled=${skippedAutoExitDisabled} skippedOther=${skippedOther} errors=${errors}`,
     );
 
     return NextResponse.json({
@@ -112,6 +123,8 @@ export async function POST(req: Request) {
       peakUpdated,
       priceUnavailable,
       skipped,
+      skippedAutoExitDisabled,
+      skippedOther,
       errors,
     });
   } catch (err: any) {

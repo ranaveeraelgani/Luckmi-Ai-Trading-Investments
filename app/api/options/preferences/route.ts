@@ -108,6 +108,10 @@ export async function PUT(req: Request) {
       patch.profit_trail_distance_pct = v;
     }
 
+    if (body.auto_exit_enabled != null) {
+      patch.auto_exit_enabled = Boolean(body.auto_exit_enabled);
+    }
+
     if (body.include_long_options != null) {
       patch.include_long_options = Boolean(body.include_long_options);
     }

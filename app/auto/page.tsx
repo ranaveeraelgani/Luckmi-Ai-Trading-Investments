@@ -217,12 +217,14 @@ function Card({
 function Pill({
   children,
   className = "",
+  title,
 }: {
   children: React.ReactNode;
   className?: string;
+  title?: string;
 }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${className}`}>
+    <span title={title} className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${className}`}>
       {children}
     </span>
   );
@@ -955,6 +957,32 @@ export default function AutoTradingPage() {
                             {ai?.action ? (
                               <Pill className="border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]">
                                 AI {ai.action}
+                              </Pill>
+                            ) : null}
+                            {stock.rinse_repeat ? (
+                              <Pill
+                                className="border-blue-500/30 bg-blue-500/10 text-blue-300"
+                                title={`Repeat cycle: ${stock.repeat_counter ?? 0} done, ${Math.max(0, (stock.max_repeats ?? 0) - (stock.repeat_counter ?? 0))} left`}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 h-3 w-3 shrink-0" aria-hidden="true">
+                                  <path d="M17 2l4 4-4 4" />
+                                  <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                                  <path d="M7 22l-4-4 4-4" />
+                                  <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                                </svg>
+                                {stock.repeat_counter ?? 0}/{stock.max_repeats ?? "∞"}
+                              </Pill>
+                            ) : null}
+                            {stock.compound_profits ? (
+                              <Pill
+                                className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                title="Compound profits enabled — gains are reinvested each cycle"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 h-3 w-3 shrink-0" aria-hidden="true">
+                                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                                  <polyline points="17 6 23 6 23 12" />
+                                </svg>
+                                Compound
                               </Pill>
                             ) : null}
                           </div>

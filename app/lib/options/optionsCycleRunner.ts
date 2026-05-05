@@ -55,6 +55,7 @@ interface OpenTrade {
 }
 
 interface UserPrefs {
+  auto_exit_enabled: boolean;
   hard_loss_stop_pct: number;
   profit_trail_activation_pct: number;
   profit_trail_distance_pct: number;
@@ -183,11 +184,12 @@ async function fetchTradeById(tradeId: string): Promise<OpenTrade | null> {
 async function fetchUserPrefs(userId: string): Promise<UserPrefs> {
   const { data } = await supabaseAdmin
     .from('option_preferences')
-    .select('hard_loss_stop_pct, profit_trail_activation_pct, profit_trail_distance_pct')
+    .select('auto_exit_enabled, hard_loss_stop_pct, profit_trail_activation_pct, profit_trail_distance_pct')
     .eq('user_id', userId)
     .maybeSingle();
 
   return {
+    auto_exit_enabled: data?.auto_exit_enabled ?? true,
     hard_loss_stop_pct: data?.hard_loss_stop_pct ?? 50,
     profit_trail_activation_pct: data?.profit_trail_activation_pct ?? 40,
     profit_trail_distance_pct: data?.profit_trail_distance_pct ?? 25,
@@ -290,6 +292,10 @@ export async function runOptionsTradeJob(tradeId: string): Promise<TradeJobOutco
   const peakPnl = Math.max(trade.peak_pnl ?? currentPnl, currentPnl);
 
   const prefs = await fetchUserPrefs(trade.user_id);
+
+  if (!prefs.auto_exit_enabled) {
+    return { action: 'skipped', reason: 'auto exits disabled by user' };
+  }
 
   const { shouldClose, exitReason } = evaluateTrailStop({
     currentPnl,

@@ -443,6 +443,10 @@ export async function runTradeCycleForUser({
         lastEvaluatedPrice: stock.last_evaluated_price ?? null,
         lastAiDecision: stock.last_ai_decision ?? null,
         reentryCooldownUntil: stock.reentry_cooldown_until ?? null,
+        // Feature flags — must be camelCase because engine reads them that way
+        rinseRepeat: stock.rinse_repeat ?? false,
+        maxRepeats: stock.max_repeats ?? 0,
+        compoundProfits: stock.compound_profits ?? false,
         currentPosition: position
           ? {
               entryPrice: Number(position.entry_price) || 0,
@@ -456,8 +460,14 @@ export async function runTradeCycleForUser({
     });
 
     const eligibleStocks = hydratedStocks.filter((stock: any) => {
+      // In-position stocks are ALWAYS eligible — they must be evaluated for sell
+      // regardless of repeat limits (blocking them would leave positions stuck open).
+      if (stock.status === 'in-position') return true;
+      // Stocks without rinse_repeat enabled are always eligible.
       if (!stock.rinse_repeat) return true;
-      return (stock.repeat_counter || 0) < (stock.max_repeats || 0);
+      // Stocks with rinse_repeat but no max_repeats cap run indefinitely.
+      if (!stock.max_repeats || stock.max_repeats <= 0) return true;
+      return (stock.repeat_counter || 0) < stock.max_repeats;
     });
 
     if (eligibleStocks.length === 0) {
@@ -531,18 +541,23 @@ export async function runTradeCycleForUser({
     }
 
     if (needsBrokerExecution && hasChanges) {
-       const  brokerExecution = await executeBrokerTradesForUser({
-            userId,
-            trades: trades,
-        });
-        console.log("Broker execution:", brokerExecution);
-        await saveEngineStateOnly({
-            supabase,
-            userId,
-            updatedStocks: updatedStocks,
-        });
+       try {
+         const brokerExecution = await executeBrokerTradesForUser({
+             userId,
+             trades: trades,
+         });
+         console.log("Broker execution:", brokerExecution);
+       } catch (brokerErr) {
+         console.error('[engine] broker execution failed — saving engine state anyway', brokerErr);
+       }
 
-        await clearPendingAutoJobIfManual();
+       await saveEngineStateOnly({
+           supabase,
+           userId,
+           updatedStocks: updatedStocks,
+       });
+
+       await clearPendingAutoJobIfManual();
 
         return {
             success: true,

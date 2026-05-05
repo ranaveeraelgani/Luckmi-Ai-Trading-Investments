@@ -11,6 +11,8 @@ export type OptionPreferences = {
   hard_loss_stop_pct: number;        // close when loss >= X% of max_loss (0-100)
   profit_trail_activation_pct: number; // start trailing after gain >= X% of max_gain (0-100)
   profit_trail_distance_pct: number;   // trail: close if drops X% of max_gain below peak (0-100)
+  // Auto-exit toggle
+  auto_exit_enabled: boolean;
   // Long options toggle
   include_long_options: boolean;
   updated_at?: string;
@@ -25,6 +27,7 @@ export const DEFAULT_OPTION_PREFERENCES: Omit<OptionPreferences, 'user_id'> = {
   hard_loss_stop_pct: 50,
   profit_trail_activation_pct: 40,
   profit_trail_distance_pct: 25,
+  auto_exit_enabled: true,
   include_long_options: false,
 };
 
@@ -66,6 +69,8 @@ export async function upsertOptionPreferences(
     safe.profit_trail_activation_pct = Math.max(10, Math.min(100, patch.profit_trail_activation_pct));
   if (patch.profit_trail_distance_pct != null)
     safe.profit_trail_distance_pct = Math.max(5, Math.min(100, patch.profit_trail_distance_pct));
+  if (patch.auto_exit_enabled != null)
+    safe.auto_exit_enabled = patch.auto_exit_enabled;
   if (patch.include_long_options != null)
     safe.include_long_options = patch.include_long_options;
 

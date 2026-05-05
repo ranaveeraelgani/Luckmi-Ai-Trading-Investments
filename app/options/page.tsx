@@ -111,6 +111,7 @@ type OptionPreferences = {
   hard_loss_stop_pct: number;
   profit_trail_activation_pct: number;
   profit_trail_distance_pct: number;
+  auto_exit_enabled: boolean;
   include_long_options: boolean;
 };
 
@@ -123,6 +124,7 @@ const DEFAULT_OPTION_PREFS: OptionPreferences = {
   hard_loss_stop_pct: 50,
   profit_trail_activation_pct: 40,
   profit_trail_distance_pct: 25,
+  auto_exit_enabled: true,
   include_long_options: false,
 };
 
@@ -215,6 +217,21 @@ function OptionPreferencesPanel({
 
       {/* Auto-close rules */}
       <div className="mt-4 pt-4 border-t border-white/5">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-white">Auto Exits</div>
+            <div className="text-[10px] text-gray-600 mt-0.5">When OFF, scan jobs still run but will not auto-close your options positions</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange({ auto_exit_enabled: !prefs.auto_exit_enabled })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${prefs.auto_exit_enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
+            aria-label="Toggle auto exits"
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${prefs.auto_exit_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
         <div className="flex items-center gap-2 mb-3">
           <h3 className="text-xs font-semibold text-white">Auto-Close Rules</h3>
           <span className="text-[10px] text-gray-600">(applied by auto-layer on each scan cycle)</span>
@@ -1328,8 +1345,8 @@ export default function OptionsPage() {
 
           <div className="rounded-2xl border border-white/10 bg-[#11151C] px-4 py-3 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-gray-500 uppercase tracking-wide">Automation</span>
-            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-emerald-300 font-medium">
-              Auto exits: ON
+            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_exit_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+                Auto exits: {prefs.auto_exit_enabled ? 'ON' : 'OFF'}
             </span>
             <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-gray-400">
               Auto entry: OFF (manual)
