@@ -75,12 +75,19 @@ export async function upsertOptionPreferences(
     safe.profit_trail_activation_pct = Math.max(10, Math.min(100, patch.profit_trail_activation_pct));
   if (patch.profit_trail_distance_pct != null)
     safe.profit_trail_distance_pct = Math.max(5, Math.min(100, patch.profit_trail_distance_pct));
-  if (patch.auto_exit_enabled != null)
-    safe.auto_exit_enabled = patch.auto_exit_enabled;
+  // Keep auto-entry and auto-exit coupled behind one effective control.
+  if (patch.auto_entry_enabled != null) {
+    const enabled = patch.auto_entry_enabled;
+    safe.auto_entry_enabled = enabled;
+    safe.auto_exit_enabled = enabled;
+  } else if (patch.auto_exit_enabled != null) {
+    // Backward compatibility for older callers still sending auto_exit_enabled.
+    const enabled = patch.auto_exit_enabled;
+    safe.auto_exit_enabled = enabled;
+    safe.auto_entry_enabled = enabled;
+  }
   if (patch.include_long_options != null)
     safe.include_long_options = patch.include_long_options;
-  if (patch.auto_entry_enabled != null)
-    safe.auto_entry_enabled = patch.auto_entry_enabled;
   if (patch.auto_entry_max_positions != null)
     safe.auto_entry_max_positions = Math.max(1, Math.min(15, Math.floor(patch.auto_entry_max_positions)));
 

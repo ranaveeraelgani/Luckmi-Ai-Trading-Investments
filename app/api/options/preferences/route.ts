@@ -108,16 +108,19 @@ export async function PUT(req: Request) {
       patch.profit_trail_distance_pct = v;
     }
 
-    if (body.auto_exit_enabled != null) {
-      patch.auto_exit_enabled = Boolean(body.auto_exit_enabled);
-    }
-
     if (body.include_long_options != null) {
       patch.include_long_options = Boolean(body.include_long_options);
     }
 
     if (body.auto_entry_enabled != null) {
-      patch.auto_entry_enabled = Boolean(body.auto_entry_enabled);
+      const enabled = Boolean(body.auto_entry_enabled);
+      patch.auto_entry_enabled = enabled;
+      patch.auto_exit_enabled = enabled;
+    } else if (body.auto_exit_enabled != null) {
+      // Backward compatibility for older clients: keep both fields coupled.
+      const enabled = Boolean(body.auto_exit_enabled);
+      patch.auto_entry_enabled = enabled;
+      patch.auto_exit_enabled = enabled;
     }
 
     if (body.auto_entry_max_positions != null) {

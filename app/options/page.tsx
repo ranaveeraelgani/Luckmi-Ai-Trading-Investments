@@ -240,24 +240,9 @@ function OptionPreferencesPanel({
 
       {/* Auto-close rules */}
       <div className="mt-4 pt-4 border-t border-white/5">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold text-white">Auto Exits</div>
-            <div className="text-[10px] text-gray-600 mt-0.5">When OFF, scan jobs still run but will not auto-close your options positions</div>
-          </div>
-          <button
-            type="button"
-            onClick={() => onChange({ auto_exit_enabled: !prefs.auto_exit_enabled })}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${prefs.auto_exit_enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
-            aria-label="Toggle auto exits"
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${prefs.auto_exit_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
-        </div>
-
         <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-xs font-semibold text-white">Auto-Close Rules</h3>
-          <span className="text-[10px] text-gray-600">(applied by auto-layer on each scan cycle)</span>
+          <h3 className="text-xs font-semibold text-white">Exit Rules</h3>
+          <span className="text-[10px] text-gray-600">(active when Auto Trading is ON)</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
 
@@ -340,7 +325,10 @@ function OptionPreferencesPanel({
           </div>
           <button
             type="button"
-            onClick={() => onChange({ auto_entry_enabled: !prefs.auto_entry_enabled })}
+            onClick={() => {
+              const enabled = !prefs.auto_entry_enabled;
+              onChange({ auto_entry_enabled: enabled, auto_exit_enabled: enabled });
+            }}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${prefs.auto_entry_enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
             aria-label="Toggle auto trading"
           >
@@ -1664,96 +1652,95 @@ export default function OptionsPage() {
                 Luckmi ranks today's best call and put debit spread setups using options flow, GEX, IV fit, and execution quality. AI explains the top setups.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowFilters(f => !f)}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-300 hover:border-white/20 transition"
-              >
-                Filters {showFilters ? "▲" : "▼"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowSettings(s => !s)}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-300 hover:border-white/20 transition"
-              >
-                ⚙️ Rules {showSettings ? "▲" : "▼"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowHistory(true)}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-300 hover:border-white/20 transition"
-              >
-                📋 History
-              </button>
-              <button
-                type="button"
-                onClick={load}
-                disabled={loading}
-                className="rounded-xl border border-[#F5C76E]/30 bg-[#F5C76E]/10 px-4 py-2 text-sm font-medium text-[#F5C76E] hover:bg-[#F5C76E]/20 disabled:opacity-50 transition"
-              >
-                {loading ? "Scanning…" : "Refresh"}
-              </button>
-            </div>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#11151C] px-4 py-3 flex flex-wrap items-center gap-2 text-xs">
+          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 flex flex-wrap items-center gap-1.5 text-[11px]">
             <span className="text-gray-500 uppercase tracking-wide">Automation</span>
-            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_exit_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
-                Auto exits: {prefs.auto_exit_enabled ? 'ON' : 'OFF'}
+            <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.auto_entry_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+              Auto trading: {prefs.auto_entry_enabled ? `ON · up to ${prefs.auto_entry_max_positions}` : 'OFF'}
             </span>
-            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_entry_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
-              Auto entry: {prefs.auto_entry_enabled ? `ON · up to ${prefs.auto_entry_max_positions}` : 'OFF'}
-            </span>
-            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+            <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
               Long options scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
             </span>
-            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+            <span className={`rounded-full border px-2 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
               Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
             </span>
           </div>
 
           {prefs.auto_entry_enabled && (
-            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
               All discoveries are auto candidates; entries are placed only if checks pass.
             </div>
           )}
 
           {/* Data source status — two rows: options flow and stock prices */}
-          <div className="rounded-2xl border border-white/10 bg-[#11151C] px-4 py-3 space-y-2">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 space-y-1.5">
+            <div className="flex items-center gap-2 text-xs">
               {dataMode === 'live_strict' ? (
                 <>
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
                   <span className="text-emerald-300 font-medium">Options flow: Live strict (UW)</span>
-                  <span className="text-gray-500 text-xs">— no mock fallback; symbols with missing UW legs are excluded</span>
+                  <span className="text-gray-500">— no mock fallback; symbols with missing UW legs are excluded</span>
                 </>
               ) : (
                 <>
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
                   <span className="text-amber-300 font-medium">Options flow: Mock data</span>
-                  <span className="text-gray-500 text-xs">— live options flow not configured</span>
+                  <span className="text-gray-500">— live options flow not configured</span>
                 </>
               )}
             </div>
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-xs">
               {quotesSource === 'live' ? (
                 <>
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
                   <span className="text-emerald-300 font-medium">Stock prices: Live</span>
-                  <span className="text-gray-500 text-xs">— spread strikes are anchored to real current prices</span>
+                  <span className="text-gray-500">— spread strikes are anchored to real current prices</span>
                 </>
               ) : (
                 <>
                   <span className="h-2 w-2 rounded-full bg-red-400 shrink-0" />
                   <span className="text-red-300 font-medium">Stock prices: Unavailable</span>
-                  <span className="text-gray-500 text-xs">— real-time prices not configured; spread strikes may be approximate</span>
+                  <span className="text-gray-500">— real-time prices not configured; spread strikes may be approximate</span>
                 </>
               )}
             </div>
             {dataMode === 'live_strict' && scanMeta && scanMeta.eligibleSymbols < scanMeta.totalUniverse && (
               <SkippedSymbolsDisclosure scanMeta={scanMeta} />
             )}
+          </div>
+
+          {/* Actions Row */}
+          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFilters(f => !f)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:border-white/20 transition"
+            >
+              Filters {showFilters ? "▲" : "▼"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettings(s => !s)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:border-white/20 transition"
+            >
+              ⚙️ Rules {showSettings ? "▲" : "▼"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowHistory(true)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:border-white/20 transition"
+            >
+              📋 History
+            </button>
+            <button
+              type="button"
+              onClick={load}
+              disabled={loading}
+              className="ml-auto rounded-lg border border-[#F5C76E]/30 bg-[#F5C76E]/10 px-3 py-1.5 text-xs font-medium text-[#F5C76E] hover:bg-[#F5C76E]/20 disabled:opacity-50 transition"
+            >
+              {loading ? "Scanning…" : "Refresh"}
+            </button>
           </div>
 
           {/* Filter Panel */}
