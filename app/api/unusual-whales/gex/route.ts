@@ -7,8 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { UWGexData, GexBias } from '@/app/lib/options/types';
-
-const UW_BASE = 'https://api.unusualwhales.com';
+import { uwFetch } from '@/app/lib/uw/client';
 
 function getMockGex(symbol: string): UWGexData {
   return {
@@ -32,8 +31,7 @@ export async function GET(req: NextRequest) {
   const allowMock = req.nextUrl.searchParams.get('allowMock') !== '0';
   if (!symbol) return NextResponse.json({ error: 'symbol required' }, { status: 400 });
 
-  const apiKey = process.env.UNUSUAL_WHALES_API_KEY;
-  if (!apiKey) {
+  if (!process.env.UNUSUAL_WHALES_API_KEY) {
     if (!allowMock) {
       return NextResponse.json({ error: 'UW API key missing and mock disabled' }, { status: 503 });
     }
@@ -41,19 +39,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(
-      `${UW_BASE}/api/stock/${encodeURIComponent(symbol.toUpperCase())}/greek-exposure/strike`,
-      { headers: { Authorization: `Bearer ${apiKey}` }, next: { revalidate: 120 } }
+    const { data } = await uwFetch<{ data?: unknown[] }>(
+      `/api/stock/${encodeURIComponent(symbol.toUpperCase())}/greek-exposure/strike`,
+      { revalidate: 120 }
     );
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[unusual-whales/gex] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-      if (!allowMock) {
-        return NextResponse.json({ error: `UW gex unavailable (${res.status})` }, { status: 502 });
-      }
-      return NextResponse.json(getMockGex(symbol.toUpperCase()));
-    }
-    const data = await res.json();
     // Response: { data: [{ strike, call_gex, put_gex, call_delta, put_delta, ... }] }
     const rows: any[] = Array.isArray(data?.data) ? data.data : [];
 

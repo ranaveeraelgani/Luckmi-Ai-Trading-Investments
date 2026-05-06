@@ -7,8 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { UWVolatilityData } from '@/app/lib/options/types';
-
-const UW_BASE = 'https://api.unusualwhales.com';
+import { uwFetch } from '@/app/lib/uw/client';
 
 function getMockIv(symbol: string): UWVolatilityData {
   return {
@@ -42,8 +41,7 @@ export async function GET(req: NextRequest) {
   const allowMock = req.nextUrl.searchParams.get('allowMock') !== '0';
   if (!symbol) return NextResponse.json({ error: 'symbol required' }, { status: 400 });
 
-  const apiKey = process.env.UNUSUAL_WHALES_API_KEY;
-  if (!apiKey) {
+  if (!process.env.UNUSUAL_WHALES_API_KEY) {
     if (!allowMock) {
       return NextResponse.json({ error: 'UW API key missing and mock disabled' }, { status: 503 });
     }
@@ -51,19 +49,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(
-      `${UW_BASE}/api/stock/${encodeURIComponent(symbol.toUpperCase())}/iv-rank`,
-      { headers: { Authorization: `Bearer ${apiKey}` }, next: { revalidate: 300 } }
+    const { data } = await uwFetch<{ data?: unknown[] }>(
+      `/api/stock/${encodeURIComponent(symbol.toUpperCase())}/iv-rank`,
+      { revalidate: 300 }
     );
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[unusual-whales/iv] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-      if (!allowMock) {
-        return NextResponse.json({ error: `UW iv unavailable (${res.status})` }, { status: 502 });
-      }
-      return NextResponse.json(getMockIv(symbol.toUpperCase()));
-    }
-    const data = await res.json();
     // Response: { data: [{ iv_rank_1y, volatility, date, close }] } — array sorted by date.
     // NOTE: iv_rank_1y units are inconsistent across UW symbols/tiers (0-1 or 0-100).
     // Normalize safely to 0-100.

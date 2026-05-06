@@ -8,8 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { UWContractCandidate } from '@/app/lib/options/types';
-
-const UW_BASE = 'https://api.unusualwhales.com';
+import { uwFetch } from '@/app/lib/uw/client';
 
 function strikeIncrement(price: number): number {
   if (price >= 500) return 10;
@@ -74,8 +73,7 @@ export async function GET(req: NextRequest) {
   const spotPrice = Number(req.nextUrl.searchParams.get('spotPrice') ?? 0);
   if (!symbol) return NextResponse.json({ error: 'symbol required' }, { status: 400 });
 
-  const apiKey = process.env.UNUSUAL_WHALES_API_KEY;
-  if (!apiKey) {
+  if (!process.env.UNUSUAL_WHALES_API_KEY) {
     if (!allowMock) {
       return NextResponse.json({ error: 'UW API key missing and mock disabled' }, { status: 503 });
     }
@@ -98,18 +96,11 @@ export async function GET(req: NextRequest) {
         max_dte: '90',
       });
 
-      const res = await fetch(
-        `${UW_BASE}/api/screener/option-contracts?${params.toString()}`,
-        { headers: { Authorization: `Bearer ${apiKey}` }, next: { revalidate: 120 } }
+      const { data } = await uwFetch<{ data?: unknown[] }>(
+        `/api/screener/option-contracts?${params.toString()}`,
+        { revalidate: 120 }
       );
 
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        console.warn(`[unusual-whales/screener] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-        throw new Error(`UW screener unavailable for ${optionType} (${res.status})`);
-      }
-
-      const data = await res.json();
       const raw = Array.isArray(data?.data) ? data.data : data ?? [];
       return Array.isArray(raw) ? raw : [];
     };

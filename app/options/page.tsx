@@ -1323,6 +1323,17 @@ type ScanMeta = {
   totalUniverse: number;
   eligibleSymbols: number;
   skippedSymbols: { symbol: string; reason: string }[];
+  uwTelemetry?: {
+    totalRequests: number;
+    dedupHits: number;
+    dedupMisses: number;
+    retries: number;
+    rateLimit429s: number;
+    requestErrors: number;
+    lowRateLimitWarnings: number;
+    inflightPeak: number;
+    inflightCurrent: number;
+  };
 };
 
 function SkippedSymbolsDisclosure({ scanMeta }: { scanMeta: ScanMeta }) {
@@ -1388,6 +1399,42 @@ function SkippedSymbolsDisclosure({ scanMeta }: { scanMeta: ScanMeta }) {
   );
 }
 
+function UwTelemetryDisclosure({ scanMeta }: { scanMeta: ScanMeta }) {
+  const [open, setOpen] = useState(false);
+  const t = scanMeta.uwTelemetry;
+  if (!t) return null;
+
+  return (
+    <div className="border-t border-white/5 pt-2 mt-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 text-xs text-blue-300 hover:text-blue-200 transition w-full"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
+        <span>
+          UW telemetry: {t.totalRequests} req, {t.rateLimit429s} rate-limit, {t.retries} retries, {t.dedupHits} dedup hits
+        </span>
+        <span className="ml-auto text-gray-600">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded-xl bg-[#1A1F2B] px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+          <div className="text-gray-400">Total requests: <span className="text-white">{t.totalRequests}</span></div>
+          <div className="text-gray-400">Dedup hits: <span className="text-white">{t.dedupHits}</span></div>
+          <div className="text-gray-400">Dedup misses: <span className="text-white">{t.dedupMisses}</span></div>
+          <div className="text-gray-400">429s: <span className="text-white">{t.rateLimit429s}</span></div>
+          <div className="text-gray-400">Retries: <span className="text-white">{t.retries}</span></div>
+          <div className="text-gray-400">Errors: <span className="text-white">{t.requestErrors}</span></div>
+          <div className="text-gray-400">Low limit warnings: <span className="text-white">{t.lowRateLimitWarnings}</span></div>
+          <div className="text-gray-400">In-flight peak: <span className="text-white">{t.inflightPeak}</span></div>
+          <div className="text-gray-400">In-flight current: <span className="text-white">{t.inflightCurrent}</span></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────
 
 export default function OptionsPage() {
@@ -1397,7 +1444,7 @@ export default function OptionsPage() {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [dataMode, setDataMode] = useState<'mock' | 'live_strict'>('mock');
   const [quotesSource, setQuotesSource] = useState<'live' | 'unavailable'>('unavailable');
-  const [scanMeta, setScanMeta] = useState<{ totalUniverse: number; eligibleSymbols: number; skippedSymbols: { symbol: string; reason: string }[] } | null>(null);
+  const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selected, setSelected] = useState<OptionsOpportunity | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -1720,6 +1767,9 @@ export default function OptionsPage() {
             </div>
             {dataMode === 'live_strict' && scanMeta && scanMeta.eligibleSymbols < scanMeta.totalUniverse && (
               <SkippedSymbolsDisclosure scanMeta={scanMeta} />
+            )}
+            {dataMode === 'live_strict' && scanMeta?.uwTelemetry && (
+              <UwTelemetryDisclosure scanMeta={scanMeta} />
             )}
           </div>
 

@@ -29,7 +29,7 @@ const MIN_SCORE = 35;
 const AI_ENRICH_THRESHOLD = 55;
 const MAX_AI_CALLS = 5;
 const CALL_DELAY_MS = 550;
-const SYMBOL_FETCH_DELAY_MS = 550;
+const SYMBOL_BATCH_SIZE = 2;
 const RETRY_429_MAX_ATTEMPTS = 3;
 const RETRY_429_BASE_DELAY_MS = 180;
 
@@ -227,141 +227,155 @@ export async function GET(req: NextRequest) {
     }
     await sleep(CALL_DELAY_MS);
 
-    // ── 3. Scan each symbol ────────────────────────────────────────────────
+    // ── 3. Scan each symbol concurrently ──────────────────────────────────────
     const opportunities: OptionsOpportunity[] = [];
 
-    for (let i = 0; i < symbols.length; i++) {
-      const symbol = symbols[i];
-      if (i > 0) await sleep(SYMBOL_FETCH_DELAY_MS);
+    for (let start = 0; start < symbols.length; start += SYMBOL_BATCH_SIZE) {
+      const batch = symbols.slice(start, start + SYMBOL_BATCH_SIZE);
 
-      const spotPrice = spotPrices[symbol] ?? 0;
-      if (spotPrice <= 0) continue;
+      const symbolResults = await Promise.allSettled(
+        batch.map(async (symbol) => {
+        const spotPrice = spotPrices[symbol] ?? 0;
+        if (spotPrice <= 0) return [];
 
-      // -- Flow data
-      type FlowResp = { flow?: UWOptionsFlowItem[] };
-      const flowData = await fetchJson<FlowResp>(
-        `${base}/api/options/flow?symbol=${symbol}`
-      );
-      await sleep(CALL_DELAY_MS);
+        const sym = encodeURIComponent(symbol.toUpperCase());
 
-      // -- Net premium
-      type NetPremiumResp = { netPremium?: UWNetPremiumTick };
-      const npmData = await fetchJson<NetPremiumResp>(
-        `${base}/api/options/net-premium?symbol=${symbol}`
-      );
-      await sleep(CALL_DELAY_MS);
+        // Fetch all 4 data sources concurrently per symbol.
+        // The UW proxy routes now have built-in retry/backoff for 429s.
+        const [flowRes, netPremRes, volRes, contractsRes] = await Promise.allSettled([
+          fetchJson<UWOptionsFlowItem[]>(
+            `${base}/api/unusual-whales/flow?symbol=${sym}&allowMock=0`
+          ),
+          fetchJson<UWNetPremiumTick>(
+            `${base}/api/unusual-whales/net-premium?symbol=${sym}&allowMock=0`
+          ),
+          fetchJson<UWVolatilityData>(
+            `${base}/api/unusual-whales/iv?symbol=${sym}&allowMock=0`
+          ),
+          fetchJson<UWContractCandidate[]>(
+            `${base}/api/unusual-whales/screener?symbol=${sym}&direction=both&allowMock=0&spotPrice=${spotPrice}`
+          ),
+        ]);
 
-      // -- IV / volatility
-      type VolResp = { volatility?: UWVolatilityData };
-      const volData = await fetchJson<VolResp>(
-        `${base}/api/options/volatility?symbol=${symbol}`
-      );
-      await sleep(CALL_DELAY_MS);
+        const flow = flowRes.status === 'fulfilled' && Array.isArray(flowRes.value)
+          ? (flowRes.value as UWOptionsFlowItem[])
+          : [];
+        const netPremium = netPremRes.status === 'fulfilled' ? netPremRes.value as UWNetPremiumTick | null : null;
+        const ivRank = volRes.status === 'fulfilled' && volRes.value
+          ? (volRes.value as UWVolatilityData).ivRank
+          : 50;
+        const contracts = contractsRes.status === 'fulfilled' && Array.isArray(contractsRes.value)
+          ? (contractsRes.value as UWContractCandidate[])
+          : [];
 
-      // -- Contracts
-      type ContractsResp = { contracts?: UWContractCandidate[] };
-      const contractsData = await fetchJson<ContractsResp>(
-        `${base}/api/options/contracts?symbol=${symbol}`
-      );
-      await sleep(CALL_DELAY_MS);
+        if (contracts.length === 0) return [];
 
-      const flow = flowData?.flow ?? [];
-      const netPremium = npmData?.netPremium ?? null;
-      const ivRank = volData?.volatility?.ivRank ?? 50;
-      const contracts = contractsData?.contracts ?? [];
-
-      if (contracts.length === 0) continue;
+        const symbolOpps: OptionsOpportunity[] = [];
 
       // ── Determine direction from net premium / flow bias ──────────────
-      const directions: OptionDirection[] = ['bullish', 'bearish'];
-      for (const direction of directions) {
-        const contract = selectLongContract(contracts, direction, spotPrice);
-        if (!contract) continue;
+        const directions: OptionDirection[] = ['bullish', 'bearish'];
+        for (const direction of directions) {
+          const contract = selectLongContract(contracts, direction, spotPrice);
+          if (!contract) continue;
 
-        const score = scoreLongOption({
-          direction,
-          flowData: flow,
-          netPremium,
-          ivRank,
-          contract,
-          spotPrice,
-        });
+          const score = scoreLongOption({
+            direction,
+            flowData: flow,
+            netPremium,
+            ivRank,
+            contract,
+            spotPrice,
+          });
 
-        if (score < MIN_SCORE) continue;
+          if (score < MIN_SCORE) continue;
 
-        const strategy: StrategyFamily = direction === 'bullish' ? 'long_call' : 'long_put';
-        const premium = contract.mid;                   // cost per share
-        const maxLoss = premium;                        // total risk per share
-        const maxGain = premium * MAX_GAIN_MULTIPLIER;  // theoretical target (2× premium)
-        const netDebit = premium;
+          const strategy: StrategyFamily = direction === 'bullish' ? 'long_call' : 'long_put';
+          const premium = contract.mid;                   // cost per share
+          const maxLoss = premium;                        // total risk per share
+          const maxGain = premium * MAX_GAIN_MULTIPLIER;  // theoretical target (2× premium)
+          const netDebit = premium;
 
-        // Breakeven: for calls = strike + premium; for puts = strike - premium
-        const breakeven = direction === 'bullish'
-          ? contract.strike + premium
-          : contract.strike - premium;
+          // Breakeven: for calls = strike + premium; for puts = strike - premium
+          const breakeven = direction === 'bullish'
+            ? contract.strike + premium
+            : contract.strike - premium;
 
-        const expMs = new Date(contract.expiry).getTime() - Date.now();
-        const dte = Math.round(expMs / (1000 * 60 * 60 * 24));
-        const dteBucket = deriveDteBucket(dte);
-        const liquidityQuality = deriveLiquidityQuality(contract);
+          const expMs = new Date(contract.expiry).getTime() - Date.now();
+          const dte = Math.round(expMs / (1000 * 60 * 60 * 24));
+          const dteBucket = deriveDteBucket(dte);
+          const liquidityQuality = deriveLiquidityQuality(contract);
 
-        const thesis = direction === 'bullish'
-          ? `${symbol} long call at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`
-          : `${symbol} long put at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`;
+          const thesis = direction === 'bullish'
+            ? `${symbol} long call at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`
+            : `${symbol} long put at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`;
 
-        const now = new Date();
-        const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+          const now = new Date();
+          const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 
-        const opp: OptionsOpportunity = {
-          id: `${symbol}-${strategy}-${contract.strike}-${contract.expiry}`,
-          symbol,
-          direction,
-          strategy,
-          score: {
-            flowScore: Math.min(100, score + 5),
-            structureScore: 50, // single-leg — no spread structure scoring
-            volatilityFitScore: ivRank < 30 ? 80 : ivRank < 50 ? 55 : 30,
-            executionQualityScore: liquidityQuality === 'excellent' ? 90 : liquidityQuality === 'good' ? 70 : 40,
-            finalScore: score,
-            flowDetail: {},
-            structureDetail: {},
-            volatilityDetail: {},
-            executionDetail: {},
-          },
-          longLeg: {
-            action: 'buy',
-            optionType: contract.optionType,
-            strike: contract.strike,
-            expiry: contract.expiry,
-            mid: contract.mid,
-            delta: contract.delta,
-          },
-          // shortLeg intentionally absent — single-leg position
-          dteBucket,
-          netDebit,
-          maxGain,
-          maxLoss,
-          breakeven,
-          riskRewardRatio: maxGain / maxLoss,
-          thesis,
-          invalidationCondition: direction === 'bullish'
-            ? `${symbol} breaks below $${(spotPrice * 0.97).toFixed(0)} or premium loses 50%`
-            : `${symbol} breaks above $${(spotPrice * 1.03).toFixed(0)} or premium loses 50%`,
-          profitTarget: premium * 1.5,   // exit at 150% premium (50% gain)
-          stopLoss: premium * 0.50,      // stop at 50% loss of premium
-          flowSummary: netPremium
-            ? `Net ${direction === 'bullish' ? 'call' : 'put'} premium: $${(direction === 'bullish' ? netPremium.callPremium : netPremium.putPremium).toLocaleString()}`
-            : `${flow.filter(f => f.isUnusual).length} unusual flow items`,
-          structureSummary: `Single-leg ${strategy.replace('_', ' ')} — ${dte}d to expiry`,
-          ivRank,
-          gexBias: 'neutral',
-          liquidityQuality,
-          status: 'active',
-          createdAt: now.toISOString(),
-          expiresAt,
-        };
+          const opp: OptionsOpportunity = {
+            id: `${symbol}-${strategy}-${contract.strike}-${contract.expiry}`,
+            symbol,
+            direction,
+            strategy,
+            score: {
+              flowScore: Math.min(100, score + 5),
+              structureScore: 50, // single-leg — no spread structure scoring
+              volatilityFitScore: ivRank < 30 ? 80 : ivRank < 50 ? 55 : 30,
+              executionQualityScore: liquidityQuality === 'excellent' ? 90 : liquidityQuality === 'good' ? 70 : 40,
+              finalScore: score,
+              flowDetail: {},
+              structureDetail: {},
+              volatilityDetail: {},
+              executionDetail: {},
+            },
+            longLeg: {
+              action: 'buy',
+              optionType: contract.optionType,
+              strike: contract.strike,
+              expiry: contract.expiry,
+              mid: contract.mid,
+              delta: contract.delta,
+            },
+            // shortLeg intentionally absent — single-leg position
+            dteBucket,
+            netDebit,
+            maxGain,
+            maxLoss,
+            breakeven,
+            riskRewardRatio: maxGain / maxLoss,
+            thesis,
+            invalidationCondition: direction === 'bullish'
+              ? `${symbol} breaks below $${(spotPrice * 0.97).toFixed(0)} or premium loses 50%`
+              : `${symbol} breaks above $${(spotPrice * 1.03).toFixed(0)} or premium loses 50%`,
+            profitTarget: premium * 1.5,   // exit at 150% premium (50% gain)
+            stopLoss: premium * 0.50,      // stop at 50% loss of premium
+            flowSummary: netPremium
+              ? `Net ${direction === 'bullish' ? 'call' : 'put'} premium: $${(direction === 'bullish' ? netPremium.callPremium : netPremium.putPremium).toLocaleString()}`
+              : `${flow.filter(f => f.isUnusual).length} unusual flow items`,
+            structureSummary: `Single-leg ${strategy.replace('_', ' ')} — ${dte}d to expiry`,
+            ivRank,
+            gexBias: 'neutral',
+            liquidityQuality,
+            status: 'active',
+            createdAt: now.toISOString(),
+            expiresAt,
+          };
 
-        opportunities.push(opp);
+          symbolOpps.push(opp);
+        }
+          return symbolOpps;
+        })
+      );
+
+      for (const result of symbolResults) {
+        if (result.status === 'fulfilled') {
+          opportunities.push(...result.value);
+        }
+      }
+
+      const hasMore = start + SYMBOL_BATCH_SIZE < symbols.length;
+      if (hasMore) {
+        await sleep(CALL_DELAY_MS);
       }
     }
 

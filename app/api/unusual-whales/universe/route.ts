@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-
-const UW_BASE = 'https://api.unusualwhales.com';
+import { uwFetch } from '@/app/lib/uw/client';
 const DEFAULT_UNIVERSE = [
   'NVDA', 'SPY', 'QQQ', 'AAPL', 'MSFT',
   'TSLA', 'AMZN', 'META', 'AMD', 'PLTR',
@@ -97,9 +96,7 @@ function buildFallbackUniverse() {
 
 export async function GET() {
   const policy = getUniverseCachePolicy();
-  const apiKey = process.env.UNUSUAL_WHALES_API_KEY;
-
-  if (!apiKey) {
+  if (!process.env.UNUSUAL_WHALES_API_KEY) {
     const fallback = buildFallbackUniverse();
     return NextResponse.json({
       ...fallback,
@@ -120,27 +117,10 @@ export async function GET() {
       is_otm: 'true',
     });
 
-    const res = await fetch(
-      `${UW_BASE}/api/screener/option-contracts?${params.toString()}`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        next: { revalidate: policy.ttlSeconds },
-      }
+    const { data } = await uwFetch<{ data?: any[] }>(
+      `/api/screener/option-contracts?${params.toString()}`,
+      { revalidate: policy.ttlSeconds }
     );
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[unusual-whales/universe] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-      const fallback = buildFallbackUniverse();
-      return NextResponse.json({
-        ...fallback,
-        generatedAt: new Date().toISOString(),
-        cachePolicy: policy,
-        note: `UW universe discovery unavailable (${res.status}); using static fallback universe.`,
-      });
-    }
-
-    const data = await res.json();
     const raw = Array.isArray(data?.data) ? data.data : [];
     const bySymbol = new Map<string, UniverseSymbolRow>();
 

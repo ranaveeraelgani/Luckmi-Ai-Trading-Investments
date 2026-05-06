@@ -8,8 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { UWOptionsFlowItem } from '@/app/lib/options/types';
-
-const UW_BASE = 'https://api.unusualwhales.com';
+import { uwFetch } from '@/app/lib/uw/client';
 
 function getMockFlow(symbol: string): UWOptionsFlowItem[] {
   const now = new Date().toISOString();
@@ -66,10 +65,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'symbol required' }, { status: 400 });
   }
 
-  const apiKey = process.env.UNUSUAL_WHALES_API_KEY;
-
   // ── MOCK MODE (no API key) ───────────────────────────────
-  if (!apiKey) {
+  if (!process.env.UNUSUAL_WHALES_API_KEY) {
     if (!allowMock) {
       return NextResponse.json({ error: 'UW API key missing and mock disabled' }, { status: 503 });
     }
@@ -78,24 +75,10 @@ export async function GET(req: NextRequest) {
 
   // ── REAL UW API ──────────────────────────────────────────
   try {
-    const res = await fetch(
-      `${UW_BASE}/api/stock/${encodeURIComponent(symbol.toUpperCase())}/flow-recent`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        next: { revalidate: 60 },
-      }
+    const { data } = await uwFetch<{ data?: unknown[] }>(
+      `/api/stock/${encodeURIComponent(symbol.toUpperCase())}/flow-recent`,
+      { revalidate: 60 }
     );
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[unusual-whales/flow] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-      if (!allowMock) {
-        return NextResponse.json({ error: `UW flow unavailable (${res.status})` }, { status: 502 });
-      }
-      return NextResponse.json(getMockFlow(symbol.toUpperCase()));
-    }
-
-    const data = await res.json();
     // flow-recent returns aggregated data per expiry (not individual contracts).
     // We create one synthetic call item and one put item per expiry row.
     const rows: any[] = Array.isArray(data?.data) ? data.data : [];
