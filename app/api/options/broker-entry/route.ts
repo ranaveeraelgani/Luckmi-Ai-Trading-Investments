@@ -14,6 +14,14 @@ import { placeOptionsBrokerEntry } from '@/app/lib/options/placeOptionsBrokerEnt
 
 export async function POST(req: Request) {
   try {
+    // Never place broker orders from mock-data mode.
+    if (!process.env.UNUSUAL_WHALES_API_KEY) {
+      return NextResponse.json(
+        { error: 'Live options data is not configured. Broker entry is disabled in mock mode.' },
+        { status: 422 },
+      );
+    }
+
     const supabase = await createClient();
     const { data: { user }, error: userError } = await supabase.auth.getUser();
 
@@ -26,6 +34,13 @@ export async function POST(req: Request) {
       body = await req.json();
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (String(body.dataMode ?? '').toLowerCase() === 'mock') {
+      return NextResponse.json(
+        { error: 'Cannot place broker entry from mock opportunities.' },
+        { status: 422 },
+      );
     }
 
     // Required fields

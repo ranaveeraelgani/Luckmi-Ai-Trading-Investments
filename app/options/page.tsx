@@ -1136,6 +1136,7 @@ function OpportunityCard({
   onOpen,
   onPaperTrade,
   brokerMode,
+  dataMode,
   prefs,
   openPositionCount,
   inPosition,
@@ -1144,6 +1145,7 @@ function OpportunityCard({
   onOpen: (o: OptionsOpportunity) => void;
   onPaperTrade: (o: OptionsOpportunity) => void;
   brokerMode: 'paper' | 'live' | null;
+  dataMode: 'mock' | 'live_strict';
   prefs: OptionPreferences;
   openPositionCount: number;
   inPosition: boolean;
@@ -1152,7 +1154,9 @@ function OpportunityCard({
   const tradeMaxLoss = opp.netDebit * 100;
   const autoEntryActive = prefs.auto_entry_enabled;
   const blockReason =
-    !brokerMode
+    dataMode !== 'live_strict'
+      ? 'Live options flow required (mock mode blocked)'
+      : !brokerMode
       ? 'Connect Alpaca and run Test Connection'
       : inPosition
       ? 'Already in position'
@@ -1500,6 +1504,7 @@ export default function OptionsPage() {
         symbol: opp.symbol,
         direction: opp.direction,
         strategy: opp.strategy,
+        dataMode,
         longOccSymbol: buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike),
         shortOccSymbol: opp.shortLeg
           ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
@@ -1907,6 +1912,7 @@ export default function OptionsPage() {
                         onOpen={setSelected}
                         onPaperTrade={setPaperTradeTarget}
                         brokerMode={brokerMode}
+                        dataMode={dataMode}
                         prefs={prefs}
                         openPositionCount={openPositionCount}
                         inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
@@ -1931,6 +1937,7 @@ export default function OptionsPage() {
                         onOpen={setSelected}
                         onPaperTrade={setPaperTradeTarget}
                         brokerMode={brokerMode}
+                        dataMode={dataMode}
                         prefs={prefs}
                         openPositionCount={openPositionCount}
                         inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}

@@ -62,17 +62,20 @@ function getOrigin(req: Request): string {
 }
 
 /** Fetch opportunities list from the scan cache endpoint. */
-async function fetchOpportunities(origin: string): Promise<OptionsOpportunity[]> {
+async function fetchOpportunities(origin: string): Promise<{ opportunities: OptionsOpportunity[]; dataMode: 'mock' | 'live_strict' | 'unknown' }> {
   try {
     const res = await fetch(`${origin}/api/options/opportunities`, {
       headers: { 'x-internal-cron': 'true' },
       // deliberately no revalidate — let the endpoint manage its own cache TTL
     });
-    if (!res.ok) return [];
+    if (!res.ok) return { opportunities: [], dataMode: 'unknown' };
     const data = await res.json();
-    return Array.isArray(data?.opportunities) ? (data.opportunities as OptionsOpportunity[]) : [];
+    return {
+      opportunities: Array.isArray(data?.opportunities) ? (data.opportunities as OptionsOpportunity[]) : [],
+      dataMode: data?.dataMode === 'live_strict' ? 'live_strict' : data?.dataMode === 'mock' ? 'mock' : 'unknown',
+    };
   } catch {
-    return [];
+    return { opportunities: [], dataMode: 'unknown' };
   }
 }
 
@@ -143,7 +146,18 @@ export async function POST(req: Request) {
   }
 
   // ── Fetch opportunities once — shared across all users ───────────────────
-  const allOpportunities = await fetchOpportunities(origin);
+  const { opportunities: allOpportunities, dataMode } = await fetchOpportunities(origin);
+
+  if (dataMode !== 'live_strict') {
+    return NextResponse.json({
+      success: true,
+      usersProcessed: 0,
+      tradesPlaced: 0,
+      skippedUsers: users.length,
+      reason: 'Auto-entry disabled because opportunities are not in live_strict mode.',
+      details: users.map((u) => ({ userId: u.user_id, placed: 0, skippedReason: 'mock data mode' })),
+    });
+  }
 
   let totalPlaced = 0;
   let totalSkippedUsers = 0;
