@@ -1625,7 +1625,8 @@ export default function OptionsPage() {
     openTrades.map(t => toPositionKey(t.symbol, t.direction, t.strategy))
   );
 
-  const effectiveMinScore = Math.max(filters.minScore, prefs.min_score_threshold);
+  // Discovery visibility should be controlled by UI filters, not by auto-trading rule thresholds.
+  const effectiveMinScore = filters.minScore;
   const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore })
     .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade)
     // Discoveries should not duplicate currently-held positions.
@@ -1633,6 +1634,13 @@ export default function OptionsPage() {
   const visible = activePositionSymbol
     ? baseVisible.filter(o => o.symbol.toUpperCase() === activePositionSymbol)
     : baseVisible;
+
+  // If selected symbol no longer has any discoveries, clear the filter to avoid empty-screen confusion.
+  useEffect(() => {
+    if (!activePositionSymbol) return;
+    const stillExists = baseVisible.some(o => o.symbol.toUpperCase() === activePositionSymbol);
+    if (!stillExists) setActivePositionSymbol(null);
+  }, [activePositionSymbol, baseVisible]);
   const topHighConv = visible.filter(o => o.score.finalScore >= 75);
   const remaining = visible.filter(o => o.score.finalScore < 75);
 

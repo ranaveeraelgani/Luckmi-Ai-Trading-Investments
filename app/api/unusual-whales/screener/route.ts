@@ -66,7 +66,8 @@ function getMockContracts(symbol: string, direction: string, spotPrice: number):
 
 export async function GET(req: NextRequest) {
   const symbol = req.nextUrl.searchParams.get('symbol');
-  const direction = req.nextUrl.searchParams.get('direction') ?? 'bullish';
+  const directionRaw = (req.nextUrl.searchParams.get('direction') ?? 'bullish').toLowerCase();
+  const direction = directionRaw === 'both' || directionRaw === 'bearish' ? directionRaw : 'bullish';
   const allowMock = req.nextUrl.searchParams.get('allowMock') !== '0';
   // spotPrice is passed by the opportunities route (which fetches live quotes) so mock
   // strikes are anchored to the real current price rather than a stale lookup table.
@@ -89,8 +90,7 @@ export async function GET(req: NextRequest) {
     // Omit min_volume: the global universe screener aggregates volume across all
     // contracts, so a symbol can rank highly in the universe but have no single
     // contract exceeding 200 volume. Let UW apply its own server-side floor.
-    const allRaw: any[] = [];
-    for (const optionType of requestedTypes) {
+    const requestType = async (optionType: 'call' | 'put'): Promise<any[]> => {
       const params = new URLSearchParams({
         ticker_symbol: symbol.toUpperCase(),
         type: optionType,
@@ -106,15 +106,30 @@ export async function GET(req: NextRequest) {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         console.warn(`[unusual-whales/screener] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-        if (!allowMock) {
-          return NextResponse.json({ error: `UW screener unavailable (${res.status})` }, { status: 502 });
-        }
-        return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction === 'both' ? 'bullish' : direction, spotPrice));
+        throw new Error(`UW screener unavailable for ${optionType} (${res.status})`);
       }
 
       const data = await res.json();
       const raw = Array.isArray(data?.data) ? data.data : data ?? [];
-      allRaw.push(...raw);
+      return Array.isArray(raw) ? raw : [];
+    };
+
+    const settled = await Promise.allSettled(requestedTypes.map((t) => requestType(t)));
+    const allRaw: any[] = [];
+    let successCount = 0;
+    for (const s of settled) {
+      if (s.status === 'fulfilled') {
+        allRaw.push(...s.value);
+        successCount += 1;
+      }
+    }
+
+    // If every requested type failed, preserve strict-mode behavior.
+    if (successCount === 0) {
+      if (!allowMock) {
+        return NextResponse.json({ error: 'UW screener request failed for all requested contract types' }, { status: 502 });
+      }
+      return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction, spotPrice));
     }
 
     // Parse OCC option symbol: e.g. TSLA230908C00255000
@@ -122,7 +137,8 @@ export async function GET(req: NextRequest) {
     // Greedy ticker match handles multi-char tickers (AAPL, GOOGL, etc).
     // Some UW symbols include a dot adjustment suffix (e.g. TSLA1230908C...) — strip it.
     function parseOcc(sym: string) {
-      const m = sym.match(/^[A-Z]{1,6}\.?[0-9]?\.?(\d{6})([CP])(\d{8})$/);
+      const compact = String(sym ?? '').replace(/\s+/g, '').toUpperCase();
+      const m = compact.match(/(\d{6})([CP])(\d{8})$/);
       if (!m) return { expiry: '', strike: 0 };
       const [, d, , s] = m;
       const expiry = `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4, 6)}`;
@@ -130,14 +146,17 @@ export async function GET(req: NextRequest) {
     }
 
     const normalized: UWContractCandidate[] = allRaw.slice(0, 20).map((item: any) => {
-      const { expiry, strike } = parseOcc(item.option_symbol ?? '');
+      const optionSymbol = String(item.option_symbol ?? '').replace(/\s+/g, '').toUpperCase();
+      const { expiry, strike } = parseOcc(optionSymbol);
       const mid = Number(item.avg_price ?? item.close ?? 0);
-      const cp = String(item.option_symbol ?? '').slice(-9, -8).toUpperCase();
+      const cpMatch = optionSymbol.match(/(\d{6})([CP])(\d{8})$/);
+      const cp = cpMatch?.[2] ?? '';
+      const optionType: 'call' | 'put' = cp === 'P' ? 'put' : 'call';
       return {
         symbol: symbol.toUpperCase(),
         expiry,
         strike,
-        optionType: cp === 'P' ? 'put' : 'call',
+        optionType,
         bid: mid * 0.95,
         ask: mid * 1.05,
         mid,
@@ -149,7 +168,7 @@ export async function GET(req: NextRequest) {
         theta: 0,
         vega: 0,
       };
-    });
+    }).filter((c) => Number.isFinite(c.strike) && c.strike > 0 && !!c.expiry);
 
     // If UW returned an empty list: in mock mode return synthetic legs; in strict
     // mode return an empty array (200) so the caller can decide per-direction whether
