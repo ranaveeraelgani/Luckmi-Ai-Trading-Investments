@@ -125,6 +125,8 @@ type OptionPreferences = {
   profit_trail_distance_pct: number;
   auto_exit_enabled: boolean;
   include_long_options: boolean;
+  auto_entry_enabled: boolean;
+  auto_entry_max_positions: number;
 };
 
 const DEFAULT_OPTION_PREFS: OptionPreferences = {
@@ -138,6 +140,8 @@ const DEFAULT_OPTION_PREFS: OptionPreferences = {
   profit_trail_distance_pct: 25,
   auto_exit_enabled: true,
   include_long_options: false,
+  auto_entry_enabled: false,
+  auto_entry_max_positions: 3,
 };
 
 function OptionPreferencesPanel({
@@ -325,11 +329,78 @@ function OptionPreferencesPanel({
         </button>
       </div>
 
+      {/* ── Auto Trading ─────────────────────────────────────────────────── */}
+      <div className="mt-4 pt-4 border-t border-white/5">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-white">Auto Trading</div>
+            <div className="text-[10px] text-gray-600 mt-0.5">
+              When ON, the system automatically places trades on your behalf — no action needed. Requires a connected broker.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange({ auto_entry_enabled: !prefs.auto_entry_enabled })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${prefs.auto_entry_enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
+            aria-label="Toggle auto trading"
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${prefs.auto_entry_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        {prefs.auto_entry_enabled && (
+          <div className="rounded-2xl border border-white/10 bg-[#1A1F2B] px-4 py-3 space-y-3">
+            {/* Max auto positions slider */}
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1.5">
+                Max Auto Positions: {prefs.auto_entry_max_positions}
+              </label>
+              <input
+                type="range" min={1} max={15} step={1}
+                value={prefs.auto_entry_max_positions}
+                onChange={e => onChange({ auto_entry_max_positions: Number(e.target.value) })}
+                className="w-full accent-emerald-500"
+              />
+              <div className="flex justify-between text-[10px] text-gray-600 mt-0.5">
+                <span>1</span>
+                <span>15</span>
+              </div>
+              <p className="text-[10px] text-gray-600 mt-1">
+                System will open up to this many positions per cycle if qualified setups exist.
+                Overall cap is also bounded by your Max Open Positions ({prefs.max_open_positions}) and available broker balance.
+              </p>
+            </div>
+
+            {/* Pre-checks reminder */}
+            <div className="rounded-xl bg-white/5 px-3 py-2.5 text-[10px] text-gray-500 space-y-1 leading-5">
+              <div className="text-white font-semibold text-xs mb-1">Auto-entry pre-checks (enforced per cycle)</div>
+              <div>✓ Broker connected and tested</div>
+              <div>✓ Account not blocked / no PDT violation</div>
+              <div>✓ Options buying power ≥ Max Loss Per Contract</div>
+              <div>✓ Setup score ≥ Min Score Threshold ({prefs.min_score_threshold})</div>
+              <div>✓ Net debit × 100 ≤ Max Loss Per Contract (${prefs.max_loss_per_trade})</div>
+              <div>✓ Opportunity not stale (within expiry window)</div>
+              <div>✓ No open position already held for that ticker</div>
+              <div>✓ AI is not "Avoid" with ≥ 65% confidence</div>
+            </div>
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
 
 // ── Paper Trade Types ───────────────────────────────────────
+
+type AiDecisionRecord = {
+  option_trade_id: string;
+  action: 'Enter' | 'Watch' | 'Avoid' | null;
+  reason: string | null;
+  confidence: number | null;
+  ocs_score: number | null;
+  risk_flags: string[] | null;
+};
 
 type PaperTrade = {
   id: string;
@@ -353,7 +424,195 @@ type PaperTrade = {
   pnl: number | null;
   peak_pnl?: number | null;
   notes: string | null;
+  ai_decision?: AiDecisionRecord | null;
 };
+
+// ── Options History Drawer ────────────────────────────────────
+
+function aiActionBadge(action: string | null | undefined) {
+  if (!action) return null;
+  if (action === 'Enter') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  if (action === 'Avoid') return 'border-red-500/30 bg-red-500/10 text-red-400';
+  return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+}
+
+function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
+  const [open, setOpen] = useState(false);
+  const ai = trade.ai_decision;
+  const isClosed = trade.status === 'closed';
+  const hasPnl = trade.pnl != null;
+
+  return (
+    <div className="rounded-2xl border border-white/5 bg-[#1A1F2B] overflow-hidden">
+      {/* Summary row — always visible */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-white/5 transition"
+      >
+        {/* Score ring */}
+        {trade.entry_score != null && (
+          <div className={`flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-xl border text-[11px] font-bold ${scoreRingClass(trade.entry_score)}`}>
+            {trade.entry_score}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-bold text-white">{trade.symbol}</span>
+            <Pill className={directionClass(trade.direction as OptionDirection)}>
+              {trade.direction === 'bullish' ? '▲' : '▼'} {trade.direction}
+            </Pill>
+            {ai?.action && (
+              <Pill className={aiActionBadge(ai.action) ?? ''}>AI: {ai.action}</Pill>
+            )}
+            {isClosed && hasPnl && (
+              <span className={`text-xs font-semibold ${trade.pnl! >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                {trade.pnl! >= 0 ? '+' : ''}{fmt$(trade.pnl!)}
+              </span>
+            )}
+            {!isClosed && (
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+            )}
+          </div>
+          <div className="text-[10px] text-gray-500 mt-0.5 truncate">
+            {strategyLabel(trade.strategy as StrategyFamily)} · debit {fmt$(trade.net_debit)}
+            {trade.long_strike != null && trade.short_strike != null && ` · $${trade.long_strike}/$${trade.short_strike}`}
+          </div>
+        </div>
+        <span className="text-gray-600 text-xs shrink-0">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {/* Expanded detail */}
+      {open && (
+        <div className="px-3 pb-3 pt-0 space-y-2 border-t border-white/5">
+          {/* Metrics */}
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            {[
+              { label: 'Net Debit', value: fmt$(trade.net_debit) },
+              { label: 'Max Gain', value: trade.max_gain != null ? fmt$(trade.max_gain) : '—' },
+              { label: 'Max Loss', value: trade.max_loss != null ? fmt$(trade.max_loss) : '—' },
+            ].map(m => (
+              <div key={m.label} className="rounded-xl bg-[#11151C] px-2 py-1.5 text-center">
+                <div className="text-[9px] uppercase tracking-wide text-gray-600">{m.label}</div>
+                <div className="text-xs font-semibold text-white mt-0.5">{m.value}</div>
+              </div>
+            ))}
+          </div>
+          {/* Entry / exit dates */}
+          <div className="flex items-center gap-3 text-[10px] text-gray-500">
+            <span>Entry {new Date(trade.entry_at).toLocaleString()}</span>
+            {trade.exit_at && <span>Exit {new Date(trade.exit_at).toLocaleString()}</span>}
+          </div>
+          {/* AI reason */}
+          {ai?.reason && (
+            <div className="rounded-xl border border-[#F5C76E]/10 bg-[#11151C] px-3 py-2 space-y-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <LuckmiAiIcon size={16} />
+                <span className="text-[10px] font-semibold text-white uppercase tracking-wide">AI Analysis</span>
+                {ai.confidence != null && (
+                  <span className="text-[10px] text-gray-500">{ai.confidence}% confidence</span>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-300 leading-5">{ai.reason}</p>
+              {ai.risk_flags && ai.risk_flags.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {ai.risk_flags.map((f: string) => (
+                    <Pill key={f} className="border-amber-500/30 bg-amber-500/10 text-amber-300">⚠ {f}</Pill>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!ai && (
+            <p className="text-[10px] text-gray-600 italic">No AI analysis recorded for this trade.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OptionsHistoryDrawer({
+  trades,
+  onClose,
+}: {
+  trades: PaperTrade[];
+  onClose: () => void;
+}) {
+  // Group trades by entry date (local date string)
+  const byDay = trades.reduce<Record<string, PaperTrade[]>>((acc, t) => {
+    const day = new Date(t.entry_at).toLocaleDateString(undefined, {
+      weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+    });
+    (acc[day] = acc[day] ?? []).push(t);
+    return acc;
+  }, {});
+
+  const days = Object.keys(byDay);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* Panel */}
+      <div className="relative w-full max-w-md h-full bg-[#0d1117] border-l border-white/10 flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+          <div>
+            <h2 className="text-base font-bold text-white">Options Trade History</h2>
+            <p className="text-[11px] text-gray-500 mt-0.5">{trades.length} total trade{trades.length !== 1 ? 's' : ''}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-500 hover:text-white transition text-xl leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          {days.length === 0 && (
+            <div className="text-center text-gray-500 text-sm mt-10">No trades yet.</div>
+          )}
+          {days.map(day => {
+            const dayTrades = byDay[day];
+            const openCount = dayTrades.filter(t => t.status === 'open').length;
+            const closedCount = dayTrades.filter(t => t.status === 'closed').length;
+            const dayPnl = dayTrades
+              .filter(t => t.status === 'closed' && t.pnl != null)
+              .reduce((s, t) => s + (t.pnl ?? 0), 0);
+            const hasDayPnl = closedCount > 0 && dayTrades.some(t => t.pnl != null);
+
+            return (
+              <details key={day} open>
+                <summary className="flex items-center gap-2 cursor-pointer select-none mb-2">
+                  <span className="text-xs font-semibold text-white">{day}</span>
+                  <span className="text-[10px] text-gray-500">{dayTrades.length} trade{dayTrades.length !== 1 ? 's' : ''}</span>
+                  {openCount > 0 && (
+                    <span className="rounded-full bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 text-[10px] text-emerald-300">{openCount} open</span>
+                  )}
+                  {hasDayPnl && (
+                    <span className={`ml-auto text-xs font-semibold ${dayPnl >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                      {dayPnl >= 0 ? '+' : ''}{fmt$(dayPnl)}
+                    </span>
+                  )}
+                </summary>
+                <div className="space-y-2">
+                  {dayTrades.map(t => <HistoryTradeRow key={t.id} trade={t} />)}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Paper Trade Confirmation Modal ────────────────────────────
 
@@ -903,9 +1162,12 @@ function OpportunityCard({
 }) {
   const gex = gexBadge(opp.gexBias);
   const tradeMaxLoss = opp.netDebit * 100;
+  const autoEntryActive = prefs.auto_entry_enabled;
   const blockReason =
     !brokerMode
       ? 'Connect Alpaca and run Test Connection'
+      : inPosition
+      ? 'Already in position'
       : openPositionCount >= prefs.max_open_positions
       ? `Limit reached (${prefs.max_open_positions} open)`
       : tradeMaxLoss > prefs.max_loss_per_trade
@@ -913,7 +1175,11 @@ function OpportunityCard({
       : null;
 
   return (
-    <div className="rounded-3xl border border-white/5 bg-[#11151C] transition-all hover:border-white/15 hover:bg-[#161b22] overflow-hidden flex flex-col">
+    <div className={`rounded-3xl border transition-all overflow-hidden flex flex-col ${
+      inPosition
+        ? 'border-amber-500/25 bg-[#1a1708] hover:border-amber-500/40'
+        : 'border-white/5 bg-[#11151C] hover:border-white/15 hover:bg-[#161b22]'
+    }`}>
       <div
         role="button"
         tabIndex={0}
@@ -992,19 +1258,32 @@ function OpportunityCard({
       <p className="mt-2.5 text-xs text-gray-500 line-clamp-2">{opp.thesis}</p>
       </div>
       <div className="px-4 pb-4 pt-1">
-        <button
-          type="button"
-          onClick={() => { if (!blockReason) onPaperTrade(opp); }}
-          disabled={!!blockReason}
-          title={blockReason ?? undefined}
-          className={`w-full rounded-xl border px-3 py-2 text-xs font-medium transition ${
-            blockReason
-              ? 'border-white/10 bg-white/5 text-gray-600 cursor-not-allowed'
-              : 'border-[#F5C76E]/25 bg-[#F5C76E]/5 text-[#F5C76E] hover:bg-[#F5C76E]/15'
-          }`}
-        >
-          {blockReason ? `🚫 ${blockReason}` : `Trade via Alpaca (${brokerMode?.toUpperCase()})`}
-        </button>
+        {autoEntryActive ? (
+          <div
+            title="Auto Trading is ON. Engine will evaluate and place entries automatically if setup passes checks."
+            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-center text-xs font-medium text-emerald-300"
+          >
+            Auto Trading ON - discovery managed by engine
+          </div>
+        ) : inPosition ? (
+          <div className="w-full rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-center text-xs font-medium text-amber-400">
+            ● In Position
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { if (!blockReason) onPaperTrade(opp); }}
+            disabled={!!blockReason}
+            title={blockReason ?? undefined}
+            className={`w-full rounded-xl border px-3 py-2 text-xs font-medium transition ${
+              blockReason
+                ? 'border-white/10 bg-white/5 text-gray-600 cursor-not-allowed'
+                : 'border-[#F5C76E]/25 bg-[#F5C76E]/5 text-[#F5C76E] hover:bg-[#F5C76E]/15'
+            }`}
+          >
+            {blockReason ? `🚫 ${blockReason}` : `Trade via Alpaca (${brokerMode?.toUpperCase()})`}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1018,7 +1297,6 @@ type Filters = {
   maxIvRank: number;
   dteBucket: 'all' | DteBucket;
   liquidityMin: 'all' | LiquidityQuality;
-  positionState: 'all' | 'in_position' | 'not_in_position';
 };
 
 const DEFAULT_FILTERS: Filters = {
@@ -1027,14 +1305,13 @@ const DEFAULT_FILTERS: Filters = {
   maxIvRank: 80,
   dteBucket: 'all',
   liquidityMin: 'all',
-  positionState: 'all',
 };
 
 function toPositionKey(symbol: string, direction: string, strategy: string): string {
   return `${symbol.toUpperCase()}|${direction.toLowerCase()}|${strategy.toLowerCase()}`;
 }
 
-function applyFilters(opps: OptionsOpportunity[], f: Filters, inPositionKeys: Set<string>): OptionsOpportunity[] {
+function applyFilters(opps: OptionsOpportunity[], f: Filters): OptionsOpportunity[] {
   return opps.filter(o => {
     if (f.direction !== 'all' && o.direction !== f.direction) return false;
     if (o.score.finalScore < f.minScore) return false;
@@ -1043,11 +1320,6 @@ function applyFilters(opps: OptionsOpportunity[], f: Filters, inPositionKeys: Se
     if (f.liquidityMin !== 'all') {
       const rank = { excellent: 4, good: 3, fair: 2, poor: 1 };
       if (rank[o.liquidityQuality] < rank[f.liquidityMin]) return false;
-    }
-    if (f.positionState !== 'all') {
-      const inPosition = inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy));
-      if (f.positionState === 'in_position' && !inPosition) return false;
-      if (f.positionState === 'not_in_position' && inPosition) return false;
     }
     return true;
   });
@@ -1151,6 +1423,7 @@ export default function OptionsPage() {
   const [prefs, setPrefs] = useState<OptionPreferences>(DEFAULT_OPTION_PREFS);
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Broker mode — paper/live execution if Alpaca is connected
   const [brokerMode, setBrokerMode] = useState<'paper' | 'live' | null>(null);
@@ -1254,6 +1527,11 @@ export default function OptionsPage() {
         entryScore: opp.score.finalScore,
         entrySpotPrice: null,
         qtyContracts: 1,
+        // AI fields — stored in ai_decisions so history drawer shows analysis
+        aiAction: opp.aiAction ?? null,
+        aiReason: opp.aiReason ?? null,
+        aiConfidence: opp.aiConfidence ?? null,
+        aiRiskFlags: opp.aiRiskFlags ?? null,
       };
 
       const res = await fetch('/api/options/broker-entry', {
@@ -1308,6 +1586,14 @@ export default function OptionsPage() {
 
   useEffect(() => { loadPaperTrades(); }, []);
 
+  // Auto-refresh positions every 60 s when auto-entry is ON
+  // so background cron-placed trades surface without manual refresh
+  useEffect(() => {
+    if (!prefs.auto_entry_enabled) return;
+    const id = setInterval(() => { loadPaperTrades(); }, 60_000);
+    return () => clearInterval(id);
+  }, [prefs.auto_entry_enabled]);
+
   async function loadPrefs() {
     try {
       const res = await fetch('/api/options/preferences');
@@ -1347,8 +1633,10 @@ export default function OptionsPage() {
   );
 
   const effectiveMinScore = Math.max(filters.minScore, prefs.min_score_threshold);
-  const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore }, inPositionKeys)
-    .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade);
+  const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore })
+    .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade)
+    // Discoveries should not duplicate currently-held positions.
+    .filter(o => !inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy)));
   const visible = activePositionSymbol
     ? baseVisible.filter(o => o.symbol.toUpperCase() === activePositionSymbol)
     : baseVisible;
@@ -1393,6 +1681,13 @@ export default function OptionsPage() {
               </button>
               <button
                 type="button"
+                onClick={() => setShowHistory(true)}
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-300 hover:border-white/20 transition"
+              >
+                📋 History
+              </button>
+              <button
+                type="button"
                 onClick={load}
                 disabled={loading}
                 className="rounded-xl border border-[#F5C76E]/30 bg-[#F5C76E]/10 px-4 py-2 text-sm font-medium text-[#F5C76E] hover:bg-[#F5C76E]/20 disabled:opacity-50 transition"
@@ -1407,8 +1702,8 @@ export default function OptionsPage() {
             <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_exit_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
                 Auto exits: {prefs.auto_exit_enabled ? 'ON' : 'OFF'}
             </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-gray-400">
-              Auto entry: OFF (manual)
+            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_entry_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+              Auto entry: {prefs.auto_entry_enabled ? `ON · up to ${prefs.auto_entry_max_positions}` : 'OFF'}
             </span>
             <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
               Long options scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
@@ -1417,6 +1712,12 @@ export default function OptionsPage() {
               Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
             </span>
           </div>
+
+          {prefs.auto_entry_enabled && (
+            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+              All discoveries are auto candidates; entries are placed only if checks pass.
+            </div>
+          )}
 
           {/* Data source status — two rows: options flow and stock prices */}
           <div className="rounded-2xl border border-white/10 bg-[#11151C] px-4 py-3 space-y-2">
@@ -1431,10 +1732,7 @@ export default function OptionsPage() {
                 <>
                   <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
                   <span className="text-amber-300 font-medium">Options flow: Mock data</span>
-                  <span className="text-gray-500 text-xs">— add{" "}
-                    <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">UNUSUAL_WHALES_API_KEY</code>{" "}
-                    to .env.local for live UW flow, GEX &amp; IV
-                  </span>
+                  <span className="text-gray-500 text-xs">— live options flow not configured</span>
                 </>
               )}
             </div>
@@ -1449,12 +1747,7 @@ export default function OptionsPage() {
                 <>
                   <span className="h-2 w-2 rounded-full bg-red-400 shrink-0" />
                   <span className="text-red-300 font-medium">Stock prices: Unavailable</span>
-                  <span className="text-gray-500 text-xs">— add{" "}
-                    <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">POLYGON_API_KEY</code>{" "}
-                    or{" "}
-                    <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">MASSIVE_API_KEY</code>{" "}
-                    to get real-time spot prices (symbols may be excluded in live strict mode)
-                  </span>
+                  <span className="text-gray-500 text-xs">— real-time prices not configured; spread strikes may be approximate</span>
                 </>
               )}
             </div>
@@ -1467,7 +1760,7 @@ export default function OptionsPage() {
           {showFilters && (
             <div className="rounded-3xl border border-white/10 bg-[#11151C] p-4 sm:p-5">
               <h2 className="text-sm font-semibold text-white mb-4">Filters</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
 
                 {/* Direction */}
                 <div>
@@ -1547,19 +1840,6 @@ export default function OptionsPage() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1.5">Position Status</label>
-                  <select
-                    value={filters.positionState}
-                    onChange={e => setFilters(f => ({ ...f, positionState: e.target.value as any }))}
-                    className="w-full rounded-lg bg-[#1A1F2B] border border-white/10 text-gray-300 text-xs px-2 py-2"
-                  >
-                    <option value="all">All</option>
-                    <option value="in_position">In Position</option>
-                    <option value="not_in_position">Not In Position</option>
-                  </select>
-                </div>
-
               </div>
               <div className="mt-3 flex justify-end">
                 <button
@@ -1597,9 +1877,19 @@ export default function OptionsPage() {
           {/* Results */}
           {!loading && !error && (
             <>
+              {/* In-Position section (separate from discoveries) */}
+              <PaperTradesPanel
+                trades={paperTrades}
+                loading={paperTradesLoading}
+                onClose={setCloseTarget}
+                onRefresh={loadPaperTrades}
+                onPickSymbol={setActivePositionSymbol}
+                activeSymbol={activePositionSymbol}
+              />
+
               {/* Summary bar */}
               <div className="flex flex-wrap items-center gap-4 text-sm text-gray-400">
-                <span><span className="text-white font-medium">{visible.length}</span> opportunities</span>
+                <span><span className="text-white font-medium">{visible.length}</span> discoveries</span>
                 <span><span className="text-emerald-300 font-medium">{topHighConv.length}</span> high conviction</span>
                 <span><span className="text-amber-300 font-medium">{openPositionCount}</span> in-position</span>
                 {activePositionSymbol && (
@@ -1677,16 +1967,6 @@ export default function OptionsPage() {
                 </div>
               )}
 
-              {/* Paper Trades */}
-              <PaperTradesPanel
-                trades={paperTrades}
-                loading={paperTradesLoading}
-                onClose={setCloseTarget}
-                onRefresh={loadPaperTrades}
-                onPickSymbol={setActivePositionSymbol}
-                activeSymbol={activePositionSymbol}
-              />
-
               {/* How scoring works */}
               <section className="rounded-3xl border border-white/5 bg-[#11151C] p-5">
                 <h2 className="text-sm font-semibold text-white mb-3">How Luckmi Options Score Works</h2>
@@ -1735,6 +2015,14 @@ export default function OptionsPage() {
           onConfirm={closePaperTrade}
           onCancel={() => setCloseTarget(null)}
           closing={closingTrade}
+        />
+      )}
+
+      {/* Trade History Drawer */}
+      {showHistory && (
+        <OptionsHistoryDrawer
+          trades={paperTrades}
+          onClose={() => setShowHistory(false)}
         />
       )}
     </div>

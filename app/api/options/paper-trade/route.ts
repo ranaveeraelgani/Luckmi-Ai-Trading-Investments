@@ -100,7 +100,7 @@ export async function GET() {
          max_loss, entry_score, entry_spot_price, status,
         entry_at, exit_at, exit_price, pnl, broker_order_id, notes,
         qty_contracts, execution_mode_snapshot, broker_status,
-        entry_broker_order_id, exit_broker_order_id, close_requested_at`
+        entry_broker_order_id, exit_broker_order_id, close_requested_at, peak_pnl`
       )
       .eq("user_id", user.id)
       .order("entry_at", { ascending: false });
@@ -110,7 +110,32 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ trades: data ?? [] });
+    const trades = data ?? [];
+
+    // Attach ai_decisions records (non-fatal if query fails)
+    let decisionMap: Map<string, any> = new Map();
+    try {
+      const tradeIds = trades.map((t: any) => t.id).filter(Boolean);
+      if (tradeIds.length > 0) {
+        const { data: decisions } = await supabase
+          .from("ai_decisions")
+          .select("option_trade_id, action, reason, confidence, ocs_score, risk_flags")
+          .in("option_trade_id", tradeIds)
+          .not("option_trade_id", "is", null);
+        decisionMap = new Map(
+          (decisions ?? []).map((d: any) => [d.option_trade_id, d])
+        );
+      }
+    } catch {
+      // non-fatal — trades still returned without AI data
+    }
+
+    const tradesWithAi = trades.map((t: any) => ({
+      ...t,
+      ai_decision: decisionMap.get(t.id) ?? null,
+    }));
+
+    return NextResponse.json({ trades: tradesWithAi });
   } catch (err: any) {
     console.error("[paper-trade] GET exception:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

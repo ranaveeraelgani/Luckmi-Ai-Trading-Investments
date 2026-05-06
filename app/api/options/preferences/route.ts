@@ -116,6 +116,17 @@ export async function PUT(req: Request) {
       patch.include_long_options = Boolean(body.include_long_options);
     }
 
+    if (body.auto_entry_enabled != null) {
+      patch.auto_entry_enabled = Boolean(body.auto_entry_enabled);
+    }
+
+    if (body.auto_entry_max_positions != null) {
+      const v = Number(body.auto_entry_max_positions);
+      if (!Number.isFinite(v) || v < 1 || v > 15 || !Number.isInteger(v))
+        return NextResponse.json({ error: "auto_entry_max_positions must be an integer 1-15" }, { status: 400 });
+      patch.auto_entry_max_positions = v;
+    }
+
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "No valid fields provided" }, { status: 400 });
     }

@@ -9,7 +9,7 @@
 import type { OptionsOpportunity } from './types';
 import { getBaseUrl } from '@/app/lib/utils/get-base-url';
 
-type OptionsAiResult = {
+export type OptionsAiResult = {
   action: 'Enter' | 'Watch' | 'Avoid';
   strategy: string;
   reason: string;
@@ -44,51 +44,51 @@ export async function getOptionsAiRecommendation(
 
     const strategyLabel = opp.strategy === 'call_debit_spread'
       ? 'Call Debit Spread (bullish)'
-      : 'Put Debit Spread (bearish)';
+      : opp.strategy === 'put_debit_spread'
+      ? 'Put Debit Spread (bearish)'
+      : opp.strategy === 'long_call'
+      ? 'Long Call (bullish)'
+      : 'Long Put (bearish)';
 
     const longType = opp.longLeg.optionType.toUpperCase();
     const prompt = `
-You are an expert options analyst for Luckmi AI. Your job is to VALIDATE a pre-scored options setup and explain it clearly. The numerical score is already calculated — do NOT second-guess the math. Your role is to add context, flag genuine risks, and recommend whether to act.
+You are an expert options analyst for Luckmi AI. Your job is to VALIDATE a pre-scored options setup.
+The numerical score is already calculated — do NOT second-guess the math.
+Add context, flag genuine risks, and recommend whether to act.
+
+IMPORTANT: This recommendation may be used in an automated trading system.
+Use "Avoid" ONLY for clear hard invalidation or severe risk (earnings imminent, elevated IV unfavorable, technical breakdown).
+Use "Watch" for uncertainty or mixed signals — NOT to block a trade.
 
 === SETUP ===
 Symbol: ${opp.symbol}
 Direction: ${opp.direction}
 Strategy: ${strategyLabel}
-
 Long leg: Buy $${opp.longLeg.strike} ${longType} expiring ${opp.longLeg.expiry}
-${opp.shortLeg ? `Short leg: Sell $${opp.shortLeg.strike} ${longType} expiring ${opp.shortLeg.expiry}` : 'Short leg: None (single-leg long option)'}
+${opp.shortLeg ? `Short leg: Sell $${opp.shortLeg.strike} ${longType} expiring ${opp.shortLeg.expiry}` : 'Short leg: None (single-leg)'}
 DTE Bucket: ${opp.dteBucket} days
 Net Debit: $${opp.netDebit.toFixed(2)} per spread
-Max Gain: $${opp.maxGain.toFixed(2)}
-Max Loss: $${opp.maxLoss.toFixed(2)} (the debit paid)
-Risk/Reward: ${opp.riskRewardRatio.toFixed(2)}:1
+Max Gain: $${opp.maxGain.toFixed(2)} | Max Loss: $${opp.maxLoss.toFixed(2)} | R/R: ${opp.riskRewardRatio.toFixed(2)}:1
 
 === LUCKMI SCORES ===
-Overall Options Score (OCS): ${opp.score.finalScore}/100
- - Flow Score: ${opp.score.flowScore}/100
- - Structure Score: ${opp.score.structureScore}/100
- - Volatility Fit Score: ${opp.score.volatilityFitScore}/100
- - Execution Quality Score: ${opp.score.executionQualityScore}/100
+OCS: ${opp.score.finalScore}/100 (Flow ${opp.score.flowScore} · Structure ${opp.score.structureScore} · VolFit ${opp.score.volatilityFitScore} · Exec ${opp.score.executionQualityScore})
 
 === MARKET CONTEXT ===
-IV Rank: ${opp.ivRank}% (for debit spreads, lower is better; ideal < 45)
-GEX Bias: ${opp.gexBias} (negative = trending environment; positive = pinning)
-Flow Summary: ${opp.flowSummary}
-Structure Summary: ${opp.structureSummary}
+IV Rank: ${opp.ivRank}% (debit spreads prefer < 45)
+GEX Bias: ${opp.gexBias} | Flow: ${opp.flowSummary} | Structure: ${opp.structureSummary}
 Invalidation: ${opp.invalidationCondition}
 
 === SCORING SCALE ===
-Score 80+: High conviction setup
-Score 65-79: Solid setup, worth monitoring
-Score 50-64: Mixed signals, caution warranted
-Below 50: Weak setup, avoid
+80+: High conviction | 65-79: Solid | 50-64: Caution | <50: Weak
 
-=== YOUR OUTPUT FORMAT (strict — no deviation) ===
-ACTION: Enter / Watch / Avoid
-STRATEGY: [1 sentence on the recommended approach or size adjustment]
-REASON: [4 sentences MAX. Sentence 1: summarize flow and structure alignment. Sentence 2: explain IV context for this strategy. Sentence 3: state the main risk. Sentence 4: what must happen for this to work.]
-CONFIDENCE: [0-100]
-RISK FLAGS: [comma-separated short phrases OR "None"]
+=== OUTPUT (respond with ONLY valid JSON, no extra text) ===
+{
+  "action": "Enter" | "Watch" | "Avoid",
+  "strategy": "<1 sentence on recommended approach or size>",
+  "reason": "<max 4 sentences: 1 flow/structure, 2 IV context, 3 main risk, 4 what must happen>",
+  "confidence": <integer 0-100>,
+  "riskFlags": ["<short phrase>"] or []
+}
 `;
 
     const res = await fetch(chatApiUrl, {
@@ -107,25 +107,49 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
       text = await res.text();
     }
 
-    const clean = text.trim().replace(/\s+/g, ' ');
+    // Parse strict JSON output; fall back to regex for legacy free-text
+    let parsed: OptionsAiResult | null = null;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const obj = JSON.parse(jsonMatch[0]);
+        const validActions = ['Enter', 'Watch', 'Avoid'];
+        parsed = {
+          action: validActions.includes(obj.action) ? (obj.action as 'Enter' | 'Watch' | 'Avoid') : 'Watch',
+          strategy: String(obj.strategy ?? '').trim() || strategyLabel,
+          reason: String(obj.reason ?? '').trim() || 'No reasoning provided.',
+          confidence: Math.min(100, Math.max(0, Math.round(Number(obj.confidence) || 50))),
+          riskFlags: Array.isArray(obj.riskFlags)
+            ? obj.riskFlags.map(String).map((s: string) => s.trim()).filter(Boolean)
+            : [],
+        };
+      }
+    } catch {
+      parsed = null;
+    }
 
-    const actionMatch = clean.match(/ACTION:\s*(Enter|Watch|Avoid)/i);
-    const strategyMatch = clean.match(/STRATEGY:\s*(.+?)(?=REASON:|$)/is);
-    const reasonMatch = clean.match(/REASON:\s*(.+?)(?=CONFIDENCE:|$)/is);
-    const confMatch = clean.match(/CONFIDENCE:\s*(\d+)/i);
-    const flagsMatch = clean.match(/RISK FLAGS:\s*(.+?)$/i);
+    // Regex fallback if JSON parse failed
+    if (!parsed) {
+      const clean = text.trim().replace(/\s+/g, ' ');
+      const actionMatch = clean.match(/ACTION:\s*(Enter|Watch|Avoid)/i);
+      const stratMatch = clean.match(/STRATEGY:\s*(.+?)(?=REASON:|$)/is);
+      const reasonMatch = clean.match(/REASON:\s*(.+?)(?=CONFIDENCE:|$)/is);
+      const confMatch = clean.match(/CONFIDENCE:\s*(\d+)/i);
+      const flagsMatch = clean.match(/RISK FLAGS:\s*(.+?)$/i);
+      if (actionMatch) {
+        parsed = {
+          action: actionMatch[1] as 'Enter' | 'Watch' | 'Avoid',
+          strategy: stratMatch ? stratMatch[1].trim() : strategyLabel,
+          reason: reasonMatch ? reasonMatch[1].trim() : 'No reasoning provided.',
+          confidence: confMatch ? Math.min(100, Math.max(0, parseInt(confMatch[1]))) : 50,
+          riskFlags: flagsMatch && flagsMatch[1].trim().toLowerCase() !== 'none'
+            ? flagsMatch[1].split(',').map(f => f.trim()).filter(Boolean)
+            : [],
+        };
+      }
+    }
 
-    if (!actionMatch) return null;
-
-    return {
-      action: actionMatch[1] as 'Enter' | 'Watch' | 'Avoid',
-      strategy: strategyMatch ? strategyMatch[1].trim() : strategyLabel,
-      reason: reasonMatch ? reasonMatch[1].trim() : 'No reasoning provided.',
-      confidence: confMatch ? Math.min(100, Math.max(0, parseInt(confMatch[1]))) : 50,
-      riskFlags: flagsMatch && flagsMatch[1].trim().toLowerCase() !== 'none'
-        ? flagsMatch[1].split(',').map(f => f.trim()).filter(Boolean)
-        : [],
-    };
+    return parsed;
   } catch (err) {
     console.error('[getOptionsAiRecommendation] error:', err);
     return null;

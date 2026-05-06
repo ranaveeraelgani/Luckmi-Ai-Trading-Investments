@@ -65,6 +65,14 @@ export async function POST(req: Request) {
       entryScore: body.entryScore != null ? Number(body.entryScore) : null,
       entrySpotPrice: body.entrySpotPrice != null ? Number(body.entrySpotPrice) : null,
       qtyContracts: body.qtyContracts != null ? Math.max(1, Math.floor(Number(body.qtyContracts))) : 1,
+      // AI recommendation fields — optional; stored in ai_decisions when provided
+      aiAction: ['Enter', 'Watch', 'Avoid'].includes(String(body.aiAction ?? ''))
+        ? (body.aiAction as 'Enter' | 'Watch' | 'Avoid')
+        : undefined,
+      aiReason: body.aiReason ? String(body.aiReason) : undefined,
+      aiConfidence: body.aiConfidence != null ? Math.min(100, Math.max(0, Number(body.aiConfidence))) : undefined,
+      aiRiskFlags: Array.isArray(body.aiRiskFlags) ? (body.aiRiskFlags as string[]) : undefined,
+      aiSource: 'manual',
     });
 
     if (!result.ok) {

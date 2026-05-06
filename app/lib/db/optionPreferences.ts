@@ -15,6 +15,10 @@ export type OptionPreferences = {
   auto_exit_enabled: boolean;
   // Long options toggle
   include_long_options: boolean;
+  // Auto-entry (cron-driven trade placement)
+  auto_entry_enabled: boolean;
+  /** How many positions the auto-entry cron may open per cycle (1-15) */
+  auto_entry_max_positions: number;
   updated_at?: string;
 };
 
@@ -29,6 +33,8 @@ export const DEFAULT_OPTION_PREFERENCES: Omit<OptionPreferences, 'user_id'> = {
   profit_trail_distance_pct: 25,
   auto_exit_enabled: true,
   include_long_options: false,
+  auto_entry_enabled: false,
+  auto_entry_max_positions: 3,
 };
 
 export async function getOptionPreferences(userId: string): Promise<OptionPreferences> {
@@ -73,6 +79,10 @@ export async function upsertOptionPreferences(
     safe.auto_exit_enabled = patch.auto_exit_enabled;
   if (patch.include_long_options != null)
     safe.include_long_options = patch.include_long_options;
+  if (patch.auto_entry_enabled != null)
+    safe.auto_entry_enabled = patch.auto_entry_enabled;
+  if (patch.auto_entry_max_positions != null)
+    safe.auto_entry_max_positions = Math.max(1, Math.min(15, Math.floor(patch.auto_entry_max_positions)));
 
   const payload = {
     user_id: userId,

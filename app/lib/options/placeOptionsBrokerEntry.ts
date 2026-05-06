@@ -39,6 +39,13 @@ export type OptionsEntryRequest = {
   entryScore: number | null;
   entrySpotPrice: number | null;
   qtyContracts?: number;
+  /** AI recommendation fields — persisted to ai_decisions when provided */
+  aiAction?: 'Enter' | 'Watch' | 'Avoid';
+  aiReason?: string;
+  aiConfidence?: number;
+  aiRiskFlags?: string[];
+  /** 'auto_entry' when placed by cron, 'manual' when placed by user */
+  aiSource?: 'auto_entry' | 'manual';
 };
 
 export type OptionsEntryResult =
@@ -61,14 +68,16 @@ async function insertOptionOrderRunEntry(params: {
   qtyContracts: number;
   netDebit: number;
   orderStatus: string;
+  triggerSource: string;
+  legSuffix?: string;
 }) {
-  const key = `option-entry:${params.tradeId}:${params.executionMode}`;
+  const key = `option-entry:${params.tradeId}:${params.executionMode}${params.legSuffix ?? ''}`;
   await supabaseAdmin.from('option_order_runs').insert({
     user_id: params.userId,
     trade_id: params.tradeId,
     broker: 'alpaca',
     action: 'entry',
-    trigger_source: 'user',
+    trigger_source: params.triggerSource,
     execution_mode: params.executionMode,
     status: params.orderStatus === 'filled' ? 'filled' : 'submitted',
     idempotency_key: key,
@@ -127,6 +136,7 @@ export async function placeOptionsBrokerEntry(
     direction,
     strategy,
     longOccSymbol,
+    shortOccSymbol,
     longStrike,
     longExpiry,
     shortStrike,
@@ -139,6 +149,9 @@ export async function placeOptionsBrokerEntry(
     entrySpotPrice,
     qtyContracts = 1,
   } = req;
+
+  const triggerSource = req.aiSource === 'auto_entry' ? 'auto_entry' : 'user';
+  const isSpread = !!shortOccSymbol && (strategy === 'call_debit_spread' || strategy === 'put_debit_spread');
 
   // 1. Broker mode gate
   const brokerMode = await getBrokerExecutionMode(userId);
@@ -224,7 +237,7 @@ export async function placeOptionsBrokerEntry(
     })
     .eq('id', tradeId);
 
-  // 7. Persist audit rows
+  // 7. Persist audit rows for long leg
   await insertOptionOrderRunEntry({
     userId,
     tradeId,
@@ -235,6 +248,8 @@ export async function placeOptionsBrokerEntry(
     qtyContracts,
     netDebit,
     orderStatus: order.status,
+    triggerSource,
+    legSuffix: isSpread ? ':long' : undefined,
   });
 
   await persistOptionTradeOrders({
@@ -249,15 +264,95 @@ export async function placeOptionsBrokerEntry(
     rawOrder: order,
   });
 
-  // 8. Entry notification
+  // 7b. For spread strategies: place short leg sell order
+  if (isSpread && shortOccSymbol) {
+    const shortClientOrderId = makeClientOrderId(userId, tradeId, 'sell');
+    try {
+      const shortOrder = await placeAlpacaOptionOrder({
+        credentials,
+        optionSymbol: shortOccSymbol,
+        side: 'sell',
+        qtyContracts,
+        type: 'market',
+        timeInForce: 'day',
+        clientOrderId: shortClientOrderId,
+      });
+      const shortBrokerOrderId: string = shortOrder.id;
+
+      await insertOptionOrderRunEntry({
+        userId,
+        tradeId,
+        executionMode,
+        brokerOrderId: shortBrokerOrderId,
+        clientOrderId: shortClientOrderId,
+        occSymbol: shortOccSymbol,
+        qtyContracts,
+        netDebit: 0,
+        orderStatus: shortOrder.status,
+        triggerSource,
+        legSuffix: ':short',
+      });
+
+      await persistOptionTradeOrders({
+        tradeId,
+        brokerOrderId: shortBrokerOrderId,
+        clientOrderId: shortClientOrderId,
+        occSymbol: shortOccSymbol,
+        underlying: symbol.toUpperCase(),
+        side: 'sell',
+        qtyContracts,
+        orderStatus: shortOrder.status,
+        rawOrder: shortOrder,
+      });
+
+      console.info(
+        `[options-entry] SPREAD short leg submitted tradeId=${tradeId} symbol=${shortOccSymbol} ` +
+        `orderId=${shortBrokerOrderId} mode=${executionMode}`,
+      );
+    } catch (shortErr: any) {
+      // Non-fatal: long leg is placed; log the failure so it can be reconciled manually
+      console.error(
+        `[options-entry] SPREAD short leg FAILED tradeId=${tradeId} shortSymbol=${shortOccSymbol}:`,
+        shortErr?.message,
+      );
+      await supabaseAdmin
+        .from('option_paper_trades')
+        .update({ broker_status: 'entry_short_leg_failed' })
+        .eq('id', tradeId);
+    }
+  }
+
+  // 8. Persist AI decision record if AI fields were supplied
+  if (req.aiAction) {
+    try {
+      await supabaseAdmin.from('ai_decisions').insert({
+        user_id: userId,
+        symbol: symbol.toUpperCase(),
+        action: req.aiAction,
+        reason: req.aiReason ?? null,
+        confidence: req.aiConfidence ?? null,
+        option_trade_id: tradeId,
+        option_strategy: strategy,
+        option_direction: direction,
+        ocs_score: entryScore ?? null,
+        risk_flags: req.aiRiskFlags?.length ? req.aiRiskFlags : null,
+        created_at: new Date().toISOString(),
+      });
+    } catch (aiErr: any) {
+      // Non-fatal — trade is already placed; log and continue
+      console.warn(`[options-entry] ai_decisions insert failed tradeId=${tradeId}:`, aiErr?.message);
+    }
+  }
+
+  // 9. Entry notification
   await enqueueNotificationEvent({
     userId,
-    type: 'option_auto_closed', // reuse trade_alerts preference bucket
+    type: 'option_entry',
     title: `Option entry submitted: ${symbol.toUpperCase()}`,
     body: `${strategy.replace(/_/g, ' ')} submitted to Alpaca ${executionMode} — ${qtyContracts} contract(s) at $${(netDebit * 100).toFixed(2)}`,
     url: '/options',
     idempotencyKey: `option-entry-submitted:${tradeId}`,
-    metadata: { tradeId, brokerOrderId, executionMode },
+    metadata: { tradeId, brokerOrderId, executionMode, triggerSource },
   });
 
   console.info(
