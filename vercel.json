@@ -12,5 +12,9 @@
 		"app/api/cron/options-jobs-drain/route.ts": {
 			"maxDuration": 60
 		}
+		,
+		"app/api/cron/options-order-runs-drain/route.ts": {
+			"maxDuration": 60
+		}
 	}
 }

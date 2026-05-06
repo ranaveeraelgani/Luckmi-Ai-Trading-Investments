@@ -14,6 +14,7 @@ export default function AlpacaBrokerPage() {
     const [brokerStatus, setBrokerStatus] = useState<any>(null);
     const [savingBroker, setSavingBroker] = useState(false);
     const [testingBroker, setTestingBroker] = useState(false);
+    const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
     const fetchBrokerStatus = async () => {
         try {
@@ -33,6 +34,7 @@ export default function AlpacaBrokerPage() {
     const saveBrokerKeys = async () => {
         try {
             setSavingBroker(true);
+            setFeedback(null);
 
             const res = await fetch('/api/broker/save', {
                 method: 'POST',
@@ -41,15 +43,15 @@ export default function AlpacaBrokerPage() {
             });
 
             if (!res.ok) {
-                const text = await res.text();
-                throw new Error(text);
+                const data = await res.json().catch(() => ({}));
+                throw new Error((data as any)?.error || 'Failed to save broker keys');
             }
 
             await fetchBrokerStatus();
-            alert('Broker keys saved');
+            setFeedback({ type: 'success', message: 'Broker keys saved. Run Test Connection to validate them.' });
         } catch (err) {
             console.error(err);
-            alert('Failed to save broker keys');
+            setFeedback({ type: 'error', message: err instanceof Error ? err.message : 'Failed to save broker keys' });
         } finally {
             setSavingBroker(false);
         }
@@ -58,24 +60,25 @@ export default function AlpacaBrokerPage() {
     const testBrokerConnection = async () => {
         try {
             setTestingBroker(true);
+            setFeedback(null);
 
             const res = await fetch('/api/broker/test', {
                 method: 'POST',
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
 
             if (!res.ok) {
-                throw new Error(data?.message || 'Broker test failed');
+                throw new Error((data as any)?.error || (data as any)?.message || 'Broker test failed');
             }
 
-            await fetchBrokerStatus();
-            alert('Broker connection healthy');
+            setFeedback({ type: 'success', message: (data as any)?.message || 'Broker connection healthy' });
         } catch (err) {
             console.error(err);
-            alert('Broker test failed');
+            setFeedback({ type: 'error', message: err instanceof Error ? err.message : 'Broker test failed' });
         } finally {
             setTestingBroker(false);
+            await fetchBrokerStatus();
         }
     };
     return (
@@ -85,7 +88,7 @@ export default function AlpacaBrokerPage() {
                 <div className="bg-[#11151c] border border-gray-700 rounded-3xl p-5 mt-6">
                     <div className="text-lg font-semibold mb-1">Broker Connection</div>
                     <div className="text-sm text-gray-400 mb-4">
-                        Connect Alpaca for paper trading now, live trading later.
+                        Connect Alpaca and validate keys with Test Connection before enabling automation.
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-4">
@@ -151,6 +154,18 @@ export default function AlpacaBrokerPage() {
                             {testingBroker ? 'Testing...' : 'Test Connection'}
                         </button>
                     </div>
+
+                    {feedback ? (
+                        <div
+                            className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                                feedback.type === 'success'
+                                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                    : 'border-red-500/30 bg-red-500/10 text-red-200'
+                            }`}
+                        >
+                            {feedback.message}
+                        </div>
+                    ) : null}
 
                     <div className="mt-5 text-sm">
                         <div className="text-gray-400 mb-2">Current Status</div>

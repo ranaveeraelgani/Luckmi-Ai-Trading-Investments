@@ -15,6 +15,18 @@ import type {
 
 // ── Helpers ──────────────────────────────────────────────────
 
+/** Build an OCC option symbol from leg components.
+ *  Format: UNDERLYING + YYMMDD + C/P + 8-digit-strike-in-thousandths
+ *  e.g. AAPL260620C00200000 for AAPL $200 call expiring 2026-06-20 */
+function buildOccSymbol(underlying: string, expiry: string, optionType: 'call' | 'put', strike: number): string {
+  // expiry may be 'YYYY-MM-DD' or 'YYMMDD'
+  const d = expiry.replace(/-/g, '');           // → 'YYYYMMDD' or 'YYMMDD'
+  const ymd = d.length === 8 ? d.slice(2) : d; // → 'YYMMDD'
+  const cp = optionType === 'call' ? 'C' : 'P';
+  const strikePadded = Math.round(strike * 1000).toString().padStart(8, '0');
+  return `${underlying.toUpperCase()}${ymd}${cp}${strikePadded}`;
+}
+
 function fmt$(v: number) {
   return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -116,7 +128,7 @@ type OptionPreferences = {
 };
 
 const DEFAULT_OPTION_PREFS: OptionPreferences = {
-  max_loss_per_trade: 500,
+  max_loss_per_trade: 300,
   max_open_positions: 5,
   preferred_dte_min: 7,
   preferred_dte_max: 60,
@@ -148,18 +160,25 @@ function OptionPreferencesPanel({
         {/* Max loss per trade */}
         <div>
           <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1.5">
-            Max Loss Per Trade
+            Max Loss Per Contract: ${prefs.max_loss_per_trade}
           </label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+          <input
+            type="range" min={50} max={5000} step={50}
+            value={prefs.max_loss_per_trade}
+            onChange={e => onChange({ max_loss_per_trade: Number(e.target.value) })}
+            className="w-full accent-[#F5C76E]"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[10px] text-gray-600">$50</span>
             <input
-              type="number" min={50} max={50000} step={50}
+              type="number" min={50} max={5000} step={50}
               value={prefs.max_loss_per_trade}
               onChange={e => onChange({ max_loss_per_trade: Number(e.target.value) })}
-              className="w-full rounded-xl bg-[#1A1F2B] border border-white/10 pl-6 pr-3 py-2 text-sm text-white focus:border-[#F5C76E]/40 focus:outline-none"
+              className="w-28 rounded-lg bg-[#1A1F2B] border border-white/10 px-2 py-1 text-xs text-white focus:border-[#F5C76E]/40 focus:outline-none"
             />
+            <span className="text-[10px] text-gray-600">$5,000</span>
           </div>
-          <p className="text-[10px] text-gray-600 mt-1">Paper Trade blocked if net debit ×100 exceeds this</p>
+          <p className="text-[10px] text-gray-600 mt-1">Used by scanner and trade entry: blocks setups where net debit ×100 exceeds this per-contract limit</p>
         </div>
 
         {/* Max open positions */}
@@ -343,20 +362,23 @@ function PaperTradeModal({
   onConfirm,
   onCancel,
   saving,
+  brokerMode,
 }: {
   opp: OptionsOpportunity;
   onConfirm: () => void;
   onCancel: () => void;
   saving: boolean;
+  brokerMode: 'paper' | 'live' | null;
 }) {
   const longType = opp.longLeg.optionType.toUpperCase();
+  const modeLabel = brokerMode ? brokerMode.toUpperCase() : 'OFF';
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0d1117] shadow-2xl">
         <div className="flex items-start justify-between border-b border-white/5 p-5">
           <div>
-            <h2 className="text-lg font-bold text-white">Paper Trade</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Simulated position — no real money involved</p>
+            <h2 className="text-lg font-bold text-white">Broker Trade</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Submit to Alpaca {modeLabel} mode</p>
           </div>
           <button type="button" onClick={onCancel} className="text-gray-500 hover:text-white text-xl leading-none ml-4">✕</button>
         </div>
@@ -408,7 +430,7 @@ function PaperTradeModal({
           </div>
 
           <p className="text-xs text-gray-500 bg-[#1A1F2B] rounded-xl px-3 py-2">
-            ⚠ Paper trade only. Entry recorded at current net debit. Close manually to record exit P&L.
+            Orders are routed to Alpaca. Live orders require both env and account live flags enabled.
           </p>
           <div className="flex gap-2 pt-1">
             <button type="button" onClick={onCancel} className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-gray-300 hover:bg-white/10 transition">
@@ -420,7 +442,7 @@ function PaperTradeModal({
               disabled={saving}
               className="flex-1 rounded-xl border border-[#F5C76E]/30 bg-[#F5C76E]/15 px-4 py-2.5 text-sm font-semibold text-[#F5C76E] hover:bg-[#F5C76E]/25 disabled:opacity-50 transition"
             >
-              {saving ? "Saving…" : "Confirm Paper Trade"}
+              {saving ? "Submitting…" : "Submit Broker Order"}
             </button>
           </div>
         </div>
@@ -866,6 +888,7 @@ function OpportunityCard({
   opp,
   onOpen,
   onPaperTrade,
+  brokerMode,
   prefs,
   openPositionCount,
   inPosition,
@@ -873,6 +896,7 @@ function OpportunityCard({
   opp: OptionsOpportunity;
   onOpen: (o: OptionsOpportunity) => void;
   onPaperTrade: (o: OptionsOpportunity) => void;
+  brokerMode: 'paper' | 'live' | null;
   prefs: OptionPreferences;
   openPositionCount: number;
   inPosition: boolean;
@@ -880,10 +904,12 @@ function OpportunityCard({
   const gex = gexBadge(opp.gexBias);
   const tradeMaxLoss = opp.netDebit * 100;
   const blockReason =
-    openPositionCount >= prefs.max_open_positions
+    !brokerMode
+      ? 'Connect Alpaca and run Test Connection'
+      : openPositionCount >= prefs.max_open_positions
       ? `Limit reached (${prefs.max_open_positions} open)`
       : tradeMaxLoss > prefs.max_loss_per_trade
-      ? `Exceeds max loss ($${prefs.max_loss_per_trade})`
+      ? `Exceeds per-contract cap ($${prefs.max_loss_per_trade})`
       : null;
 
   return (
@@ -977,7 +1003,7 @@ function OpportunityCard({
               : 'border-[#F5C76E]/25 bg-[#F5C76E]/5 text-[#F5C76E] hover:bg-[#F5C76E]/15'
           }`}
         >
-          {blockReason ? `🚫 ${blockReason}` : '📄 Paper Trade'}
+          {blockReason ? `🚫 ${blockReason}` : `Trade via Alpaca (${brokerMode?.toUpperCase()})`}
         </button>
       </div>
     </div>
@@ -1126,6 +1152,22 @@ export default function OptionsPage() {
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Broker mode — paper/live execution if Alpaca is connected
+  const [brokerMode, setBrokerMode] = useState<'paper' | 'live' | null>(null);
+
+  useEffect(() => {
+    fetch('/api/broker/mode')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.connected && d?.mode) {
+          setBrokerMode(d.mode as 'paper' | 'live');
+        } else {
+          setBrokerMode(null);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -1187,35 +1229,51 @@ export default function OptionsPage() {
     setSavingPaperTrade(true);
     try {
       const opp = paperTradeTarget;
-      const res = await fetch('/api/options/paper-trade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: opp.symbol,
-          direction: opp.direction,
-          strategy: opp.strategy,
-          long_strike: opp.longLeg.strike,
-          long_expiry: opp.longLeg.expiry,
-          short_strike: opp.shortLeg?.strike ?? null,
-          short_expiry: opp.shortLeg?.expiry ?? null,
-          option_type: opp.longLeg.optionType,
-          net_debit: opp.netDebit,
-          max_gain: opp.maxGain,
-          max_loss: opp.maxLoss,
-          entry_score: opp.score.finalScore,
-          entry_spot_price: null,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        toast.error((err as any).error ?? 'Failed to save paper trade');
+
+      if (!brokerMode) {
+        toast.error('Connect Alpaca and pass Test Connection before trading options');
         return;
       }
-      toast.success(`📄 Paper trade saved: ${opp.symbol} ${opp.direction}`);
+
+      const brokerBody = {
+        symbol: opp.symbol,
+        direction: opp.direction,
+        strategy: opp.strategy,
+        longOccSymbol: buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike),
+        shortOccSymbol: opp.shortLeg
+          ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
+          : null,
+        longStrike: opp.longLeg.strike,
+        longExpiry: opp.longLeg.expiry,
+        shortStrike: opp.shortLeg?.strike ?? null,
+        shortExpiry: opp.shortLeg?.expiry ?? null,
+        optionType: opp.longLeg.optionType,
+        netDebit: opp.netDebit,
+        maxGain: opp.maxGain,
+        maxLoss: opp.maxLoss,
+        entryScore: opp.score.finalScore,
+        entrySpotPrice: null,
+        qtyContracts: 1,
+      };
+
+      const res = await fetch('/api/options/broker-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(brokerBody),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error((err as any).error ?? 'Failed to submit broker order');
+        return;
+      }
+
+      const data = await res.json();
+      toast.success(`Broker order submitted: ${opp.symbol} ${opp.direction} (${data.executionMode ?? brokerMode})`);
       setPaperTradeTarget(null);
       loadPaperTrades();
     } catch {
-      toast.error('Failed to save paper trade');
+      toast.error('Failed to submit broker order');
     } finally {
       setSavingPaperTrade(false);
     }
@@ -1289,7 +1347,8 @@ export default function OptionsPage() {
   );
 
   const effectiveMinScore = Math.max(filters.minScore, prefs.min_score_threshold);
-  const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore }, inPositionKeys);
+  const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore }, inPositionKeys)
+    .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade);
   const visible = activePositionSymbol
     ? baseVisible.filter(o => o.symbol.toUpperCase() === activePositionSymbol)
     : baseVisible;
@@ -1353,6 +1412,9 @@ export default function OptionsPage() {
             </span>
             <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
               Long options scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
+            </span>
+            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+              Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
             </span>
           </div>
 
@@ -1567,6 +1629,7 @@ export default function OptionsPage() {
                         opp={o}
                         onOpen={setSelected}
                         onPaperTrade={setPaperTradeTarget}
+                        brokerMode={brokerMode}
                         prefs={prefs}
                         openPositionCount={openPositionCount}
                         inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
@@ -1590,6 +1653,7 @@ export default function OptionsPage() {
                         opp={o}
                         onOpen={setSelected}
                         onPaperTrade={setPaperTradeTarget}
+                        brokerMode={brokerMode}
                         prefs={prefs}
                         openPositionCount={openPositionCount}
                         inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
@@ -1660,6 +1724,7 @@ export default function OptionsPage() {
           onConfirm={confirmPaperTrade}
           onCancel={() => setPaperTradeTarget(null)}
           saving={savingPaperTrade}
+          brokerMode={brokerMode}
         />
       )}
 

@@ -65,6 +65,7 @@ export async function POST(req: Request) {
     }
 
     let closed = 0;
+    let closeRequested = 0;
     let peakUpdated = 0;
     let priceUnavailable = 0;
     let skipped = 0;
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
 
         switch (outcome.action) {
           case 'closed':          closed++;           break;
+          case 'close_requested': closeRequested++;   break;
           case 'peak_updated':    peakUpdated++;      break;
           case 'price_unavailable': priceUnavailable++; break;
           case 'skipped': {
@@ -110,7 +112,7 @@ export async function POST(req: Request) {
 
     console.info(
       `[options-jobs-drain] batch done claimed=${jobs.length} ` +
-        `closed=${closed} peakUpdated=${peakUpdated} ` +
+        `closed=${closed} closeRequested=${closeRequested} peakUpdated=${peakUpdated} ` +
         `priceUnavailable=${priceUnavailable} skipped=${skipped} ` +
         `skippedAutoExitDisabled=${skippedAutoExitDisabled} skippedOther=${skippedOther} errors=${errors}`,
     );
@@ -120,6 +122,7 @@ export async function POST(req: Request) {
       claimedJobs: jobs.length,
       processed: jobs.length,
       closed,
+      closeRequested,
       peakUpdated,
       priceUnavailable,
       skipped,

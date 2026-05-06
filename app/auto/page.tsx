@@ -683,12 +683,12 @@ export default function AutoTradingPage() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-semibold sm:text-3xl">Auto Trading</h1>
                 <Pill className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
-                  Paper Trading
+                  Broker Trading
                 </Pill>
               </div>
 
               <p className="mt-2 max-w-3xl text-sm text-gray-400">
-                Your AI-managed paper trading workspace. Review positions, AI analysis, broker status, and trade timelines in one place.
+                Your AI-managed broker trading workspace. Review positions, AI analysis, broker status, and trade timelines in one place.
               </p>
               <p className="mt-1 text-xs text-gray-500">Last updated: {formatDate(lastUpdatedAt)}</p>
             </div>
@@ -844,7 +844,7 @@ export default function AutoTradingPage() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <MiniMetric label="Status" value={lastRun?.status || "—"} />
                         <MiniMetric label="Trades" value={lastRun?.trades_executed ?? 0} />
-                        <MiniMetric label="Mode" value={lastRun?.broker_mode || "paper"} />
+                        <MiniMetric label="Mode" value={lastRun?.broker_mode || "off"} />
                         <MiniMetric label="Error" value={lastRun?.error_message || "—"} />
                       </div>
                     )}
@@ -868,7 +868,7 @@ export default function AutoTradingPage() {
             {autoStocks.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-white/10 bg-[#1A1F2B] p-10 text-center">
                 <div className="text-lg font-medium text-white">No auto stocks yet</div>
-                <p className="mt-2 text-sm text-gray-400">Add your first stock and let Luckmi AI monitor paper trades for you.</p>
+                <p className="mt-2 text-sm text-gray-400">Add your first stock and let Luckmi AI monitor broker-backed trades for you.</p>
               </div>
             ) : (
               <div className="space-y-4">

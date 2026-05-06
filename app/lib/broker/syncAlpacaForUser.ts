@@ -5,6 +5,7 @@ import {
   getAlpacaAccount,
   getAlpacaOrders,
   getAlpacaPositions,
+  parseOptionContractSymbol,
 } from "@/app/lib/broker/alpaca";
 
 function n(value: any) {
@@ -42,6 +43,9 @@ export async function syncAlpacaForUser(userId: string) {
       short_market_value: n(account.short_market_value),
       initial_margin: n(account.initial_margin),
       maintenance_margin: n(account.maintenance_margin),
+      options_buying_power: n(account.options_buying_power),
+      options_approved_level: Number(account.options_approved_level || 0),
+      options_trading_level: Number(account.options_trading_level || 0),
       daytrade_count: Number(account.daytrade_count || 0),
       pattern_day_trader: Boolean(account.pattern_day_trader),
       trading_blocked: Boolean(account.trading_blocked),
@@ -59,12 +63,22 @@ export async function syncAlpacaForUser(userId: string) {
   for (const p of positions || []) {
     returnedSymbols.add(String(p.symbol).toUpperCase());
 
+    const parsedOption = parseOptionContractSymbol(String(p.symbol || ''));
+    const assetClass = String(p.asset_class || (parsedOption ? 'us_option' : 'us_equity'));
+
     await supabaseAdmin.from("broker_positions").upsert(
       {
         user_id: userId,
         broker: "alpaca",
         is_paper: credentials.isPaper,
         symbol: String(p.symbol).toUpperCase(),
+        asset_class: assetClass,
+        option_symbol: parsedOption?.optionSymbol ?? null,
+        underlying_symbol: parsedOption?.underlyingSymbol ?? null,
+        expiration_date: parsedOption?.expirationDate ?? null,
+        strike_price: parsedOption?.strikePrice ?? null,
+        option_type: parsedOption?.optionType ?? null,
+        multiplier: parsedOption?.multiplier ?? 1,
         qty: n(p.qty),
         qty_available: n(p.qty_available),
         side: p.side,
@@ -109,17 +123,32 @@ export async function syncAlpacaForUser(userId: string) {
   }
 
   for (const order of orders || []) {
+    const parsedOption = parseOptionContractSymbol(String(order.symbol || ''));
+    const assetClass = String(order.asset_class || (parsedOption ? 'us_option' : 'us_equity'));
     const upsertPayload: Record<string, any> = {
       user_id: userId,
       broker: "alpaca",
       broker_order_id: order.id,
       client_order_id: order.client_order_id,
       symbol: order.symbol,
+      asset_class: assetClass,
+      option_symbol: parsedOption?.optionSymbol ?? null,
+      underlying_symbol: parsedOption?.underlyingSymbol ?? null,
+      expiration_date: parsedOption?.expirationDate ?? null,
+      strike_price: parsedOption?.strikePrice ?? null,
+      option_type: parsedOption?.optionType ?? null,
+      multiplier: parsedOption?.multiplier ?? 1,
       side: order.side,
       qty: n(order.qty),
       order_type: order.order_type || order.type,
+      order_class: order.order_class || null,
+      position_intent: order.position_intent || null,
       time_in_force: order.time_in_force,
       status: order.status,
+      limit_price: n(order.limit_price),
+      notional: n(order.notional),
+      legs_json: Array.isArray(order.legs) ? order.legs : null,
+      execution_mode_snapshot: credentials.isPaper ? 'paper' : 'live',
       submitted_at: order.submitted_at,
       filled_qty: n(order.filled_qty),
       filled_avg_price: n(order.filled_avg_price),

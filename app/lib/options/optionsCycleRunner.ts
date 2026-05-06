@@ -24,6 +24,7 @@
 
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
+import { requestOptionBrokerClose } from '@/app/lib/options/requestOptionBrokerClose';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,11 @@ interface OpenTrade {
   max_gain: number | null;
   max_loss: number | null;
   peak_pnl: number | null;
+  qty_contracts: number | null;
+  execution_mode_snapshot: string | null;
+  broker_status: string | null;
+  entry_broker_order_id: string | null;
+  exit_broker_order_id: string | null;
 }
 
 interface UserPrefs {
@@ -63,6 +69,7 @@ interface UserPrefs {
 
 export type TradeJobOutcome =
   | { action: 'closed'; exitReason: string; pnl: number }
+  | { action: 'close_requested'; exitReason: string; mode: 'paper' | 'live' }
   | { action: 'peak_updated'; peakPnl: number }
   | { action: 'price_unavailable' }
   | { action: 'skipped'; reason: string };
@@ -171,7 +178,8 @@ async function fetchTradeById(tradeId: string): Promise<OpenTrade | null> {
     .select(
       'id, user_id, symbol, strategy, option_type, ' +
       'long_strike, long_expiry, short_strike, short_expiry, ' +
-      'net_debit, max_gain, max_loss, peak_pnl',
+      'net_debit, max_gain, max_loss, peak_pnl, qty_contracts, execution_mode_snapshot, ' +
+      'broker_status, entry_broker_order_id, exit_broker_order_id',
     )
     .eq('id', tradeId)
     .eq('status', 'open')
@@ -293,6 +301,10 @@ export async function runOptionsTradeJob(tradeId: string): Promise<TradeJobOutco
 
   const prefs = await fetchUserPrefs(trade.user_id);
 
+  if (trade.broker_status === 'close_pending' || trade.broker_status === 'close_submitted') {
+    return { action: 'skipped', reason: 'broker close already pending' };
+  }
+
   if (!prefs.auto_exit_enabled) {
     return { action: 'skipped', reason: 'auto exits disabled by user' };
   }
@@ -309,6 +321,27 @@ export async function runOptionsTradeJob(tradeId: string): Promise<TradeJobOutco
 
   if (shouldClose) {
     const reason = exitReason ?? 'auto-exit';
+
+    if (trade.entry_broker_order_id) {
+      const brokerClose = await requestOptionBrokerClose({
+        trade,
+        exitReason: reason,
+        currentValue,
+        currentPnl,
+      });
+
+      if (!brokerClose.ok) {
+        return { action: 'skipped', reason: `broker close blocked: ${brokerClose.reason}` };
+      }
+
+      console.info(
+        `[options-cycle] CLOSE REQUESTED trade=${trade.id} symbol=${trade.symbol} ` +
+        `mode=${brokerClose.mode} reason=${reason} pnl=${currentPnl.toFixed(2)}`,
+      );
+
+      return { action: 'close_requested', exitReason: reason, mode: brokerClose.mode };
+    }
+
     await closeTrade(trade, currentValue, reason);
 
     const pnlLabel = `${currentPnl >= 0 ? '+' : ''}$${currentPnl.toFixed(2)}`;

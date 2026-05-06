@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
+import { getOptionPreferences } from "@/app/lib/db/optionPreferences";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,10 @@ interface PaperTradeInsert {
   entry_score?: number | null;
   entry_spot_price?: number | null;
   broker_order_id?: string | null; // reserved for auto-layer / Alpaca bridge
+  entry_broker_order_id?: string | null;
+  execution_mode_snapshot?: "paper" | "live" | null;
+  qty_contracts?: number | null;
+  broker_status?: string | null;
   notes?: string | null;
 }
 
@@ -93,7 +98,9 @@ export async function GET() {
         `id, symbol, direction, strategy, long_strike, long_expiry,
          short_strike, short_expiry, option_type, net_debit, max_gain,
          max_loss, entry_score, entry_spot_price, status,
-         entry_at, exit_at, exit_price, pnl, broker_order_id, notes`
+        entry_at, exit_at, exit_price, pnl, broker_order_id, notes,
+        qty_contracts, execution_mode_snapshot, broker_status,
+        entry_broker_order_id, exit_broker_order_id, close_requested_at`
       )
       .eq("user_id", user.id)
       .order("entry_at", { ascending: false });
@@ -145,6 +152,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "net_debit must be a positive number" }, { status: 400 });
     }
 
+    // Enforce user-specific per-contract cost cap (net_debit × 100).
+    const prefs = await getOptionPreferences(user.id);
+    const contractCost = body.net_debit * 100;
+    if (contractCost > prefs.max_loss_per_trade) {
+      return NextResponse.json(
+        {
+          error: `Trade exceeds your per-contract max cost of $${prefs.max_loss_per_trade}. Raise it in Options Rules for pro-sized trades.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const insert = {
       user_id: user.id,
       symbol: body.symbol.toUpperCase().trim(),
@@ -161,6 +180,10 @@ export async function POST(req: Request) {
       entry_score: body.entry_score ?? null,
       entry_spot_price: body.entry_spot_price ?? null,
       broker_order_id: body.broker_order_id ?? null,
+      entry_broker_order_id: body.entry_broker_order_id ?? body.broker_order_id ?? null,
+      execution_mode_snapshot: body.execution_mode_snapshot ?? 'paper',
+      qty_contracts: Math.max(1, Math.floor(Number(body.qty_contracts ?? 1))),
+      broker_status: body.broker_status ?? null,
       notes: body.notes ?? null,
       status: "open",
     };
@@ -217,7 +240,7 @@ export async function PATCH(req: Request) {
 
       const { data: existing, error: fetchError } = await supabase
         .from("option_paper_trades")
-        .select("id, user_id, net_debit, status")
+        .select("id, user_id, net_debit, status, entry_broker_order_id, execution_mode_snapshot, broker_status")
         .eq("id", body.id)
         .eq("user_id", user.id)
         .single();
@@ -227,6 +250,12 @@ export async function PATCH(req: Request) {
       }
       if (existing.status === "closed") {
         return NextResponse.json({ error: "Trade is already closed" }, { status: 409 });
+      }
+      if (existing.entry_broker_order_id) {
+        return NextResponse.json(
+          { error: "Broker-backed option trades cannot be manually paper-closed." },
+          { status: 409 }
+        );
       }
 
       // P&L = (exit_price - net_debit) × 100  (1 contract = 100 shares)

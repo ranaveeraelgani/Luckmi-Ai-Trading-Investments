@@ -19,7 +19,7 @@ export type OptionPreferences = {
 };
 
 export const DEFAULT_OPTION_PREFERENCES: Omit<OptionPreferences, 'user_id'> = {
-  max_loss_per_trade: 500,
+  max_loss_per_trade: 300,
   max_open_positions: 5,
   preferred_dte_min: 7,
   preferred_dte_max: 60,
