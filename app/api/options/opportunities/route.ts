@@ -34,14 +34,15 @@ import type {
 const MIN_SCORE = 35;          // trial plan: flow-recent returns sparse data; keep display wide enough to inspect setups
 const AI_ENRICH_THRESHOLD = 55; // reserve GPT enrichment for stronger setups even on the trial plan
 const MAX_AI_CALLS = 5;         // rate-limit GPT calls per request
+const AI_CALL_TIMEOUT_MS = 2500;
 // UW trial plan limits: 120 req/min, max 3 concurrent.
 // Calls are fully sequential. With 20 candidates × 6 calls = 120 total UW calls,
 // EVERY inter-call gap (including the symbol-boundary gap) must be ≥ 500ms to stay
 // under 120/min. At 550ms all gaps are uniform → 119 × 550ms ≈ 65s, ~110 calls/min.
 // KEY: SYMBOL_FETCH_DELAY_MS must equal CALL_DELAY_MS — the old 100ms caused a burst
 // at symbol boundaries (last bear-screener → next flow) that spiked to ~600 calls/min.
-const CALL_DELAY_MS = 550;
-const SYMBOL_FETCH_DELAY_MS = 550;
+const CALL_DELAY_MS = 500;
+const SYMBOL_FETCH_DELAY_MS = 500;
 const RETRY_429_MAX_ATTEMPTS = 3;
 const RETRY_429_BASE_DELAY_MS = 180;
 
@@ -101,6 +102,17 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  try {
+    return await Promise.race<T | null>([
+      promise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+  } catch {
+    return null;
+  }
 }
 
 // Pick the best long + short legs for a debit spread
@@ -286,6 +298,7 @@ export async function GET(req: NextRequest) {
 
 async function _executeScan(req: NextRequest): Promise<string> {
   try {
+    const scanStartedAt = Date.now();
     const base = getBaseUrl(req);
     const hasUwKey = Boolean(process.env.UNUSUAL_WHALES_API_KEY);
     const dataMode: 'mock' | 'live_strict' = hasUwKey ? 'live_strict' : 'mock';
@@ -294,6 +307,7 @@ async function _executeScan(req: NextRequest): Promise<string> {
     let universeSource = 'fallback_static';
     let universeCachePolicy: UniverseResponse['cachePolicy'] = undefined;
     let targetEligibleSymbols = STATIC_UNIVERSE.length;
+    const universeStartedAt = Date.now();
 
     try {
       const universeRes = await fetch(`${base}/api/unusual-whales/universe`, { cache: 'no-store' });
@@ -312,10 +326,12 @@ async function _executeScan(req: NextRequest): Promise<string> {
     } catch {
       // Fall back to the static universe if discovery fails.
     }
+    const universeMs = Date.now() - universeStartedAt;
 
     // ── 1. Fetch real spot prices for all universe symbols ──────────────────
     let liveSpotPrices: Record<string, number> = {};
     let quotesSource: 'live' | 'unavailable' = 'unavailable';
+    const quotesStartedAt = Date.now();
     try {
       const quotesRes = await fetch(
         `${base}/api/quotes?symbols=${universe.join(',')}`,
@@ -334,6 +350,7 @@ async function _executeScan(req: NextRequest): Promise<string> {
     } catch {
       // quotes fetch failed — if this happens in live mode, some symbols may be skipped.
     }
+    const quotesMs = Date.now() - quotesStartedAt;
 
     const opportunities: OptionsOpportunity[] = [];
     const skippedSymbols: { symbol: string; reason: string }[] = [];
@@ -354,7 +371,11 @@ async function _executeScan(req: NextRequest): Promise<string> {
     const allowMockParam = hasUwKey ? '&allowMock=0' : '';
 
     let eligibleSymbolCount = 0;
-    for (const symbol of universe) {
+    const uwFetchStartedAt = Date.now();
+    // Cap processing breadth so the endpoint remains responsive even when many symbols
+    // are skipped due to transient contract data gaps.
+    const maxSymbolsToScan = Math.min(universe.length, Math.max(targetEligibleSymbols, 15));
+    for (const symbol of universe.slice(0, maxSymbolsToScan)) {
       // Sequential calls to stay under the UW trial plan's 3-concurrent limit.
       // A small gap between each call prevents per-minute rate exhaustion.
       const flow = await fetchJson<UWOptionsFlowItem[]>(`${base}/api/unusual-whales/flow?symbol=${symbol}${allowMockParam}`);
@@ -366,9 +387,10 @@ async function _executeScan(req: NextRequest): Promise<string> {
       const spotParam = liveSpotPrices[symbol] ? `&spotPrice=${liveSpotPrices[symbol]}` : '';
       const volData = await fetchJson<UWVolatilityData>(`${base}/api/unusual-whales/iv?symbol=${symbol}${allowMockParam}`);
       await sleep(CALL_DELAY_MS);
-      const bullContracts = await fetchJson<UWContractCandidate[]>(`${base}/api/unusual-whales/screener?symbol=${symbol}&direction=bullish${spotParam}${allowMockParam}`);
-      await sleep(CALL_DELAY_MS);
-      const bearContracts = await fetchJson<UWContractCandidate[]>(`${base}/api/unusual-whales/screener?symbol=${symbol}&direction=bearish${spotParam}${allowMockParam}`);
+      // Fetch both call+put candidates in one screener request, then split by option type.
+      const allContracts = await fetchJson<UWContractCandidate[]>(`${base}/api/unusual-whales/screener?symbol=${symbol}&direction=both${spotParam}${allowMockParam}`);
+      const bullContracts = (allContracts ?? []).filter(c => c.optionType === 'call');
+      const bearContracts = (allContracts ?? []).filter(c => c.optionType === 'put');
 
       const spotPrice = gex?.spotPrice || liveSpotPrices[symbol] || 0;
 
@@ -412,7 +434,9 @@ async function _executeScan(req: NextRequest): Promise<string> {
         break;
       }
     }
+    const uwFetchMs = Date.now() - uwFetchStartedAt;
 
+    const scoringStartedAt = Date.now();
     for (const d of symbolData) {
       if (d.skippedReason) {
         skippedSymbols.push({ symbol: d.symbol, reason: d.skippedReason });
@@ -457,6 +481,7 @@ async function _executeScan(req: NextRequest): Promise<string> {
         }
       }
     }
+    const scoringMs = Date.now() - scoringStartedAt;
 
     opportunities.sort((a, b) => b.score.finalScore - a.score.finalScore);
 
@@ -464,9 +489,10 @@ async function _executeScan(req: NextRequest): Promise<string> {
       .filter(o => o.score.finalScore >= AI_ENRICH_THRESHOLD)
       .slice(0, MAX_AI_CALLS);
 
+    const aiStartedAt = Date.now();
     await Promise.all(
       toEnrich.map(async (opp) => {
-        const ai = await getOptionsAiRecommendation(opp);
+        const ai = await withTimeout(getOptionsAiRecommendation(opp), AI_CALL_TIMEOUT_MS);
         if (ai) {
           opp.aiAction = ai.action;
           opp.aiReason = ai.reason;
@@ -474,6 +500,15 @@ async function _executeScan(req: NextRequest): Promise<string> {
           opp.aiRiskFlags = ai.riskFlags;
         }
       })
+    );
+    const aiMs = Date.now() - aiStartedAt;
+
+    const totalMs = Date.now() - scanStartedAt;
+    console.info(
+      `[options-opportunities] done totalMs=${totalMs} universeMs=${universeMs} quotesMs=${quotesMs} ` +
+      `uwFetchMs=${uwFetchMs} scoringMs=${scoringMs} aiMs=${aiMs} symbolsScanned=${symbolData.length} ` +
+      `eligibleSymbols=${symbolData.length - skippedSymbols.length} opportunities=${opportunities.length} ` +
+      `aiEnriched=${toEnrich.length} dataMode=${dataMode} quotesSource=${quotesSource}`,
     );
 
     const body = JSON.stringify({

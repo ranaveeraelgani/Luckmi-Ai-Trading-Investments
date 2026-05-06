@@ -25,6 +25,13 @@ function roundToIncrement(value: number, inc: number): number {
 // spotPrice is passed in as a query param from the opportunities route (which fetches
 // real quotes). We never hardcode per-symbol prices here.
 function getMockContracts(symbol: string, direction: string, spotPrice: number): UWContractCandidate[] {
+  if (direction === 'both') {
+    return [
+      ...getMockContracts(symbol, 'bullish', spotPrice),
+      ...getMockContracts(symbol, 'bearish', spotPrice),
+    ];
+  }
+
   const isCall = direction === 'bullish';
   const optionType = isCall ? 'call' : 'put';
   const spot = spotPrice > 0 ? spotPrice : 100;
@@ -75,35 +82,40 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const optionType = direction === 'bullish' ? 'call' : 'put';
+    const requestedTypes: Array<'call' | 'put'> =
+      direction === 'both' ? ['call', 'put'] : [direction === 'bullish' ? 'call' : 'put'];
 
     // UW contract screener — filter by symbol and option type.
     // Omit min_volume: the global universe screener aggregates volume across all
     // contracts, so a symbol can rank highly in the universe but have no single
     // contract exceeding 200 volume. Let UW apply its own server-side floor.
-    const params = new URLSearchParams({
-      ticker_symbol: symbol.toUpperCase(),
-      type: optionType,
-      min_dte: '7',
-      max_dte: '90',
-    });
+    const allRaw: any[] = [];
+    for (const optionType of requestedTypes) {
+      const params = new URLSearchParams({
+        ticker_symbol: symbol.toUpperCase(),
+        type: optionType,
+        min_dte: '7',
+        max_dte: '90',
+      });
 
-    const res = await fetch(
-      `${UW_BASE}/api/screener/option-contracts?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${apiKey}` }, next: { revalidate: 120 } }
-    );
+      const res = await fetch(
+        `${UW_BASE}/api/screener/option-contracts?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${apiKey}` }, next: { revalidate: 120 } }
+      );
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[unusual-whales/screener] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
-      if (!allowMock) {
-        return NextResponse.json({ error: `UW screener unavailable (${res.status})` }, { status: 502 });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.warn(`[unusual-whales/screener] UW returned ${res.status}. Body: ${body.slice(0, 200)}`);
+        if (!allowMock) {
+          return NextResponse.json({ error: `UW screener unavailable (${res.status})` }, { status: 502 });
+        }
+        return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction === 'both' ? 'bullish' : direction, spotPrice));
       }
-      return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction, spotPrice));
-    }
 
-    const data = await res.json();
-    const raw = Array.isArray(data?.data) ? data.data : data ?? [];
+      const data = await res.json();
+      const raw = Array.isArray(data?.data) ? data.data : data ?? [];
+      allRaw.push(...raw);
+    }
 
     // Parse OCC option symbol: e.g. TSLA230908C00255000
     // Format: {TICKER}{YYMMDD}{C|P}{8-digit-strike/1000}
@@ -117,14 +129,15 @@ export async function GET(req: NextRequest) {
       return { expiry, strike: Number(s) / 1000 };
     }
 
-    const normalized: UWContractCandidate[] = raw.slice(0, 10).map((item: any) => {
+    const normalized: UWContractCandidate[] = allRaw.slice(0, 20).map((item: any) => {
       const { expiry, strike } = parseOcc(item.option_symbol ?? '');
       const mid = Number(item.avg_price ?? item.close ?? 0);
+      const cp = String(item.option_symbol ?? '').slice(-9, -8).toUpperCase();
       return {
         symbol: symbol.toUpperCase(),
         expiry,
         strike,
-        optionType: optionType as 'call' | 'put',
+        optionType: cp === 'P' ? 'put' : 'call',
         bid: mid * 0.95,
         ask: mid * 1.05,
         mid,
@@ -142,11 +155,11 @@ export async function GET(req: NextRequest) {
     // mode return an empty array (200) so the caller can decide per-direction whether
     // to skip, rather than treating 0 contracts the same as an API failure (502).
     if (normalized.length === 0) {
-      console.info(`[unusual-whales/screener] UW returned 0 ${optionType} contracts for ${symbol.toUpperCase()}`);
+      console.info(`[unusual-whales/screener] UW returned 0 contracts for ${symbol.toUpperCase()} (${requestedTypes.join('+')})`);
       if (!allowMock) {
         return NextResponse.json([]);
       }
-      return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction, spotPrice));
+      return NextResponse.json(getMockContracts(symbol.toUpperCase(), direction === 'both' ? 'bullish' : direction, spotPrice));
     }
 
     return NextResponse.json(normalized);
