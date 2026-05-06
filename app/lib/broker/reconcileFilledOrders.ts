@@ -293,6 +293,8 @@ export async function reconcileFilledOrders(userId: string) {
 
     let positionWriteFailed = false;
     let sellEntryPrice: number | null = null;
+    let fullExitRepeatCounter: number | null = null;
+    let fullExitStatus: "monitoring" | "completed" | null = null;
 
     if (order.auto_stock_id && order.side === "buy") {
       const { data: existingPosition } = await supabaseAdmin
@@ -398,17 +400,24 @@ export async function reconcileFilledOrders(userId: string) {
                   positionWriteFailed = true;
                 }
 
-                const { error: fullExitAutoStockError } = await supabaseAdmin
-                    .from("auto_stocks")
-                    .update({
-                        status: "monitoring",
-                        last_sell_time: order.filled_at || new Date().toISOString(),
-                    })
-                    .eq("id", order.auto_stock_id);
+                const { data: autoStockForRepeat, error: autoStockRepeatError } = await supabaseAdmin
+                  .from("auto_stocks")
+                  .select("repeat_counter, rinse_repeat, max_repeats")
+                  .eq("id", order.auto_stock_id)
+                  .eq("user_id", userId)
+                  .maybeSingle();
 
-                if (fullExitAutoStockError) {
-                  console.error("Failed to update auto stock after full exit:", fullExitAutoStockError);
+                if (autoStockRepeatError) {
+                  console.error("Failed to load auto stock repeat data:", autoStockRepeatError);
                   positionWriteFailed = true;
+                } else {
+                  const currentRepeat = n(autoStockForRepeat?.repeat_counter);
+                  const maxRepeats = n(autoStockForRepeat?.max_repeats);
+                  fullExitRepeatCounter = currentRepeat + 1;
+                  fullExitStatus =
+                    autoStockForRepeat?.rinse_repeat && maxRepeats > 0 && fullExitRepeatCounter >= maxRepeats
+                      ? "completed"
+                      : "monitoring";
                 }
             } else {
                 // partial sell
@@ -432,9 +441,10 @@ export async function reconcileFilledOrders(userId: string) {
       const { error: sellAutoStockError } = await supabaseAdmin
         .from("auto_stocks")
         .update({
-          status: "monitoring",
+          status: fullExitStatus ?? "monitoring",
           last_sell_time: order.filled_at || new Date().toISOString(),
           last_evaluated_price: price,
+          ...(fullExitRepeatCounter != null ? { repeat_counter: fullExitRepeatCounter } : {}),
         })
         .eq("id", order.auto_stock_id)
         .eq("user_id", userId);

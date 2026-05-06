@@ -222,7 +222,6 @@ export async function saveEngineStateOnly({
         status: stock.status,
         last_ai_decision: stock.lastAiDecision ?? null,
         last_evaluated_price: stock.lastEvaluatedPrice ?? null,
-        repeat_counter: stock.repeat_counter ?? stock.repeatCounter ?? undefined,
         last_sell_time: stock.lastSellTime ?? null,
         reentry_cooldown_until: stock.reentryCooldownUntil ?? null,
       })

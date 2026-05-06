@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import TopNav from "@/components/TopNav";
 import LuckmiAiIcon from "@/components/brand/LuckmiAiIcon";
 import AddAutoStockModal from "@/components/auto/AddAutoStockModal";
@@ -275,6 +275,8 @@ export default function AutoTradingPage() {
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [showGuideHighlight, setShowGuideHighlight] = useState(false);
+  const prevRepeatByStockRef = useRef<Record<string, number>>({});
+  const hasPrimedRepeatCountersRef = useRef(false);
 
   async function refreshDashboardData() {
     await Promise.all([fetchAutoStocks(), fetchLastRun(), fetchTrades()]);
@@ -329,6 +331,35 @@ export default function AutoTradingPage() {
       const data = await res.json();
 
       const stocks = Array.isArray(data) ? data : data?.stocks || [];
+
+      const nextRepeatMap: Record<string, number> = {};
+      for (const stock of stocks as AutoStock[]) {
+        if (!stock?.id) continue;
+        nextRepeatMap[stock.id] = toNumber(stock.repeat_counter);
+      }
+
+      if (hasPrimedRepeatCountersRef.current) {
+        for (const stock of stocks as AutoStock[]) {
+          if (!stock?.id) continue;
+
+          const previous = prevRepeatByStockRef.current[stock.id];
+          const current = toNumber(stock.repeat_counter);
+
+          if (Number.isFinite(previous) && current > previous) {
+            const maxRepeats = toNumber(stock.max_repeats);
+            const hasCap = maxRepeats > 0;
+            const remaining = hasCap ? Math.max(0, maxRepeats - current) : null;
+
+            addToAutoLog(
+              `${stock.symbol} repeat +${current - previous} (${current}${hasCap ? `/${maxRepeats}` : ""})${remaining !== null ? ` • ${remaining} left` : ""}`
+            );
+          }
+        }
+      }
+
+      prevRepeatByStockRef.current = nextRepeatMap;
+      hasPrimedRepeatCountersRef.current = true;
+
       setAutoStocks(stocks);
 
       const symbols = stocks.map((s: AutoStock) => s.symbol).filter(Boolean);
@@ -759,20 +790,20 @@ export default function AutoTradingPage() {
               {!portfolioCollapsed && (
                 <div className="border-t border-white/5 p-4 sm:p-5">
                   <div className="space-y-5">
-                    <div className="flex flex-row gap-4 justify-between">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
                       <div>
                         <div className="text-sm text-gray-400">Total Allocation</div>
-                        <div className="mt-1 text-2xl font-semibold text-white">{formatMoney(totalAllocation)}</div>
+                        <div className="mt-1 text-xl font-semibold text-white sm:text-2xl">{formatMoney(totalAllocation)}</div>
                       </div>
-                      <div className="text-right">
+                      <div className="sm:text-right">
                         <div className="text-sm text-gray-400">Realized P&L</div>
-                        <div className={`mt-1 text-2xl font-semibold ${pnlClass(totalRealized)}`}>
+                        <div className={`mt-1 text-xl font-semibold sm:text-2xl ${pnlClass(totalRealized)}`}>
                           {totalRealized >= 0 ? "+" : ""}{formatMoney(totalRealized)}
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="sm:text-right">
                         <div className="text-sm text-gray-400">Unrealized P&L</div>
-                        <div className={`mt-1 text-2xl font-semibold ${pnlClass(totalUnrealized)}`}>
+                        <div className={`mt-1 text-xl font-semibold sm:text-2xl ${pnlClass(totalUnrealized)}`}>
                           {totalUnrealized >= 0 ? "+" : ""}{formatMoney(totalUnrealized)}
                         </div>
                       </div>
