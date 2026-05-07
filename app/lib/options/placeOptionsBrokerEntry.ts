@@ -13,6 +13,7 @@ import { getBrokerExecutionMode } from '@/app/lib/broker/getBrokerExecutionMode'
 import { placeAlpacaOptionOrder } from '@/app/lib/broker/alpaca';
 import { parseOptionContractSymbol } from '@/app/lib/broker/alpaca';
 import { getOptionPreferences } from '@/app/lib/db/optionPreferences';
+import { DEFAULT_OPTION_PREFERENCES } from '@/app/lib/db/optionPreferences';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -161,14 +162,26 @@ export async function placeOptionsBrokerEntry(
   const executionMode = brokerMode.mode!;
 
   // 2. Per-contract cost cap
-  const prefs = await getOptionPreferences(userId);
+  let prefs;
+  try {
+    prefs = await getOptionPreferences(userId);
+  } catch (err: any) {
+    // Preferences lookup failure should not hard-fail order flow.
+    console.warn('[options-entry] option preferences lookup failed; using defaults:', err?.message);
+    prefs = { user_id: userId, ...DEFAULT_OPTION_PREFERENCES };
+  }
   const contractCost = netDebit * 100 * qtyContracts;
   if (contractCost > prefs.max_loss_per_trade * qtyContracts) {
     return { ok: false, reason: `Exceeds per-contract cap of $${prefs.max_loss_per_trade}.` };
   }
 
   // 3. Load credentials
-  const credentials = await getUserBrokerCredentials(userId);
+  let credentials: Awaited<ReturnType<typeof getUserBrokerCredentials>>;
+  try {
+    credentials = await getUserBrokerCredentials(userId);
+  } catch (err: any) {
+    return { ok: false, reason: err?.message ?? 'Broker credentials are unavailable.' };
+  }
 
   // 4. Insert trade row first so we have an ID for the order audit
   const tradeInsert = {
@@ -199,7 +212,7 @@ export async function placeOptionsBrokerEntry(
     .single();
 
   if (tradeError || !tradeRow) {
-    throw new Error(`Failed to insert option trade: ${tradeError?.message}`);
+    return { ok: false, reason: `Failed to create option trade record: ${tradeError?.message ?? 'unknown error'}` };
   }
 
   const tradeId = tradeRow.id as string;
@@ -238,31 +251,36 @@ export async function placeOptionsBrokerEntry(
     .eq('id', tradeId);
 
   // 7. Persist audit rows for long leg
-  await insertOptionOrderRunEntry({
-    userId,
-    tradeId,
-    executionMode,
-    brokerOrderId,
-    clientOrderId,
-    occSymbol: longOccSymbol,
-    qtyContracts,
-    netDebit,
-    orderStatus: order.status,
-    triggerSource,
-    legSuffix: isSpread ? ':long' : undefined,
-  });
+  try {
+    await insertOptionOrderRunEntry({
+      userId,
+      tradeId,
+      executionMode,
+      brokerOrderId,
+      clientOrderId,
+      occSymbol: longOccSymbol,
+      qtyContracts,
+      netDebit,
+      orderStatus: order.status,
+      triggerSource,
+      legSuffix: isSpread ? ':long' : undefined,
+    });
 
-  await persistOptionTradeOrders({
-    tradeId,
-    brokerOrderId,
-    clientOrderId,
-    occSymbol: longOccSymbol,
-    underlying: symbol.toUpperCase(),
-    side: 'buy',
-    qtyContracts,
-    orderStatus: order.status,
-    rawOrder: order,
-  });
+    await persistOptionTradeOrders({
+      tradeId,
+      brokerOrderId,
+      clientOrderId,
+      occSymbol: longOccSymbol,
+      underlying: symbol.toUpperCase(),
+      side: 'buy',
+      qtyContracts,
+      orderStatus: order.status,
+      rawOrder: order,
+    });
+  } catch (auditErr: any) {
+    // Non-fatal: broker order already placed and trade row exists.
+    console.warn(`[options-entry] audit insert failed tradeId=${tradeId}:`, auditErr?.message);
+  }
 
   // 7b. For spread strategies: place short leg sell order
   if (isSpread && shortOccSymbol) {
@@ -345,15 +363,20 @@ export async function placeOptionsBrokerEntry(
   }
 
   // 9. Entry notification
-  await enqueueNotificationEvent({
-    userId,
-    type: 'option_entry',
-    title: `Option entry submitted: ${symbol.toUpperCase()}`,
-    body: `${strategy.replace(/_/g, ' ')} submitted to Alpaca ${executionMode} — ${qtyContracts} contract(s) at $${(netDebit * 100).toFixed(2)}`,
-    url: '/options',
-    idempotencyKey: `option-entry-submitted:${tradeId}`,
-    metadata: { tradeId, brokerOrderId, executionMode, triggerSource },
-  });
+  try {
+    await enqueueNotificationEvent({
+      userId,
+      type: 'option_entry',
+      title: `Option entry submitted: ${symbol.toUpperCase()}`,
+      body: `${strategy.replace(/_/g, ' ')} submitted to Alpaca ${executionMode} — ${qtyContracts} contract(s) at $${(netDebit * 100).toFixed(2)}`,
+      url: '/options',
+      idempotencyKey: `option-entry-submitted:${tradeId}`,
+      metadata: { tradeId, brokerOrderId, executionMode, triggerSource },
+    });
+  } catch (notifyErr: any) {
+    // Non-fatal: notification failures should not mark entry as failed.
+    console.warn(`[options-entry] notification enqueue failed tradeId=${tradeId}:`, notifyErr?.message);
+  }
 
   console.info(
     `[options-entry] SUBMITTED tradeId=${tradeId} symbol=${symbol} ` +

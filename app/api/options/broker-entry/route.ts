@@ -97,6 +97,9 @@ export async function POST(req: Request) {
     return NextResponse.json(result, { status: 201 });
   } catch (err: any) {
     console.error('[options/broker-entry] exception:', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: err?.message ? `Broker entry failed: ${err.message}` : 'Internal server error' },
+      { status: 500 },
+    );
   }
 }

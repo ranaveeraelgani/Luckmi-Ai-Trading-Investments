@@ -92,12 +92,52 @@ export async function GET() {
       );
     }
 
+    const symbols = autoStocks.map((stock) => String(stock.symbol || "").toUpperCase()).filter(Boolean);
+
+    const { data: brokerPositions, error: brokerPositionsError } = await supabase
+      .from("broker_positions")
+      .select(`
+        symbol,
+        qty,
+        avg_entry_price
+      `)
+      .eq("user_id", user.id)
+      .eq("broker", "alpaca")
+      .in("symbol", symbols);
+
+    if (brokerPositionsError) {
+      console.error("Error loading broker positions for auto stocks:", brokerPositionsError);
+      return NextResponse.json(
+        { error: "Failed to load broker positions" },
+        { status: 500 }
+      );
+    }
+
     const positionMap = new Map(
       (positions || []).map((position) => [position.auto_stock_id, position])
     );
 
+    const brokerPositionMap = new Map(
+      (brokerPositions || []).map((position) => [String(position.symbol || "").toUpperCase(), position])
+    );
+
     const result = autoStocks.map((stock) => {
-      const openPosition = positionMap.get(stock.id) || null;
+      const position = positionMap.get(stock.id) || null;
+      const brokerPosition = brokerPositionMap.get(String(stock.symbol || "").toUpperCase()) || null;
+
+      const openPosition = position
+        ? {
+            ...position,
+            entry_price:
+              Number.isFinite(Number(brokerPosition?.avg_entry_price)) && Number(brokerPosition?.avg_entry_price) > 0
+                ? Number(brokerPosition?.avg_entry_price)
+                : position.entry_price,
+            shares:
+              Number.isFinite(Number(brokerPosition?.qty)) && Number(brokerPosition?.qty) > 0
+                ? Number(brokerPosition?.qty)
+                : position.shares,
+          }
+        : null;
 
       return {
         ...stock,

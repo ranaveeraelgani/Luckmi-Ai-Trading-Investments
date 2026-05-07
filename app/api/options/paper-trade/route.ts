@@ -78,6 +78,61 @@ function evaluateTrailStop(params: {
   return { shouldClose: false, exitReason: null };
 }
 
+// ─── Live option pricing for open positions ─────────────────────────────────
+
+function getOptionsApiBase() {
+  return process.env.MASSIVE_API_BASE_URL || 'https://api.polygon.io';
+}
+
+function getOptionsApiKey() {
+  return process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || '';
+}
+
+function buildOccSymbol(
+  underlying: string,
+  expiry: string,
+  contractType: 'call' | 'put',
+  strike: number,
+) {
+  const [year, month, day] = expiry.split('-');
+  const yy = year.slice(2);
+  const cp = contractType === 'call' ? 'C' : 'P';
+  const strikeInt = Math.round(strike * 1000);
+  const strikePadded = strikeInt.toString().padStart(8, '0');
+  return `${underlying.toUpperCase()}${yy}${month}${day}${cp}${strikePadded}`;
+}
+
+async function fetchOptionMidPrice(underlying: string, occSymbol: string): Promise<number | null> {
+  const apiKey = getOptionsApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const base = getOptionsApiBase().replace(/\/$/, '');
+    const url =
+      `${base}/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(occSymbol)}` +
+      `?apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const snap = data?.results;
+    if (!snap) return null;
+
+    if (typeof snap.last_quote?.midpoint === 'number') return snap.last_quote.midpoint;
+    const bid = snap.last_quote?.bid;
+    const ask = snap.last_quote?.ask;
+    if (typeof bid === 'number' && typeof ask === 'number') return (bid + ask) / 2;
+    const dayClose = snap.day?.close;
+    return typeof dayClose === 'number' ? dayClose : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── GET — list open paper trades for current user ────────────────────────────
 
 export async function GET() {
@@ -135,7 +190,63 @@ export async function GET() {
       ai_decision: decisionMap.get(t.id) ?? null,
     }));
 
-    return NextResponse.json({ trades: tradesWithAi });
+    const openTrades = tradesWithAi.filter((t: any) => t.status === 'open');
+    const priceByTradeId = new Map<string, { current_value: number | null; current_pnl: number | null }>();
+
+    if (openTrades.length > 0) {
+      await Promise.all(
+        openTrades.map(async (t: any) => {
+          try {
+            const longStrike = Number(t.long_strike ?? 0);
+            const longExpiry = String(t.long_expiry ?? '');
+            const type = (t.option_type === 'put' ? 'put' : 'call') as 'call' | 'put';
+
+            if (!t.symbol || !longExpiry || !Number.isFinite(longStrike) || longStrike <= 0) {
+              priceByTradeId.set(t.id, { current_value: null, current_pnl: null });
+              return;
+            }
+
+            const longOcc = buildOccSymbol(t.symbol, longExpiry, type, longStrike);
+            const longMid = await fetchOptionMidPrice(t.symbol, longOcc);
+            if (longMid == null) {
+              priceByTradeId.set(t.id, { current_value: null, current_pnl: null });
+              return;
+            }
+
+            let currentValue = longMid;
+
+            const shortStrike = t.short_strike != null ? Number(t.short_strike) : null;
+            const shortExpiry = t.short_expiry ? String(t.short_expiry) : null;
+
+            if (shortStrike != null && shortExpiry) {
+              const shortOcc = buildOccSymbol(t.symbol, shortExpiry, type, shortStrike);
+              const shortMid = await fetchOptionMidPrice(t.symbol, shortOcc);
+              if (shortMid != null) {
+                currentValue = longMid - shortMid;
+              }
+            }
+
+            // Keep P&L semantics aligned with existing close logic:
+            // pnl = (price - net_debit) * 100 (per-contract dollars).
+            const currentPnl = (Number(currentValue) - Number(t.net_debit)) * 100;
+
+            priceByTradeId.set(t.id, {
+              current_value: Number.isFinite(currentValue) ? currentValue : null,
+              current_pnl: Number.isFinite(currentPnl) ? currentPnl : null,
+            });
+          } catch {
+            priceByTradeId.set(t.id, { current_value: null, current_pnl: null });
+          }
+        })
+      );
+    }
+
+    const tradesWithLive = tradesWithAi.map((t: any) => ({
+      ...t,
+      ...(priceByTradeId.get(t.id) ?? { current_value: null, current_pnl: null }),
+    }));
+
+    return NextResponse.json({ trades: tradesWithLive });
   } catch (err: any) {
     console.error("[paper-trade] GET exception:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
