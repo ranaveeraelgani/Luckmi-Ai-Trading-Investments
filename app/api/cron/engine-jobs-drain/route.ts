@@ -10,9 +10,21 @@ import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 
 export const maxDuration = 60;
 
-const CLAIM_BATCH_SIZE = 20;
+const CLAIM_BATCH_SIZE = 12;
 const USER_BATCH_SIZE = 4;
 const LEASE_SECONDS = 240;
+const CLAIM_TIMEOUT_MS = 10_000;
+const BATCH_TIMEOUT_MS = 45_000;
+const DRAIN_BUDGET_MS = 50_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+}
 
 function chunk<T>(values: T[], size: number) {
   const chunks: T[][] = [];
@@ -23,6 +35,7 @@ function chunk<T>(values: T[], size: number) {
 }
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   const auth = req.headers.get('authorization');
   if (auth !== `Bearer ${process.env.ENGINE_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -33,11 +46,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    const jobs = await claimEngineJobs({
-      jobName: MARKET_CYCLE_JOB_NAME,
-      batchSize: CLAIM_BATCH_SIZE,
-      leaseSeconds: LEASE_SECONDS,
-    });
+    const jobs = await withTimeout(
+      claimEngineJobs({
+        jobName: MARKET_CYCLE_JOB_NAME,
+        batchSize: CLAIM_BATCH_SIZE,
+        leaseSeconds: LEASE_SECONDS,
+      }),
+      CLAIM_TIMEOUT_MS,
+      'claimEngineJobs',
+    );
 
     if (jobs.length === 0) {
       return NextResponse.json({
@@ -58,9 +75,34 @@ export async function POST(req: Request) {
     let usersUpdated = 0;
     let totalStocksProcessed = 0;
     let totalTradesExecuted = 0;
+    let timedOutBatches = 0;
+    let budgetExceeded = false;
 
     for (const userBatch of userBatches) {
-      const batchResult = await runTradeCycleForUserIds(userBatch);
+      if (Date.now() - startedAt >= DRAIN_BUDGET_MS) {
+        budgetExceeded = true;
+        console.warn('[engine-jobs-drain] wall-clock budget exceeded, stopping early');
+        break;
+      }
+
+      let batchResult;
+      try {
+        batchResult = await withTimeout(
+          runTradeCycleForUserIds(userBatch),
+          BATCH_TIMEOUT_MS,
+          'runTradeCycleForUserIds',
+        );
+      } catch (err: any) {
+        timedOutBatches++;
+        const message = err?.message || 'trade-cycle batch timeout';
+        console.error(`[engine-jobs-drain] batch timeout users=${userBatch.length} message=${message}`);
+        for (const userId of userBatch) {
+          const job = jobsByUserId.get(userId);
+          if (!job) continue;
+          await markEngineJobFailed(job.id, message);
+        }
+        continue;
+      }
 
       processedUsers += batchResult.processedUsers;
       usersUpdated += batchResult.usersUpdated;
@@ -89,6 +131,8 @@ export async function POST(req: Request) {
       usersUpdated,
       totalStocksProcessed,
       totalTradesExecuted,
+      timedOutBatches,
+      budgetExceeded,
     });
   } catch (error: any) {
     return NextResponse.json(

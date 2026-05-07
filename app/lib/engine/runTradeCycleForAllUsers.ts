@@ -3,6 +3,16 @@ import { runTradeCycleForUser } from '@/app/lib/engine/runTradeCycleForUser';
 import { syncAlpacaForUser } from "@/app/lib/broker/syncAlpacaForUser";
 
 const USER_CONCURRENCY = 3;
+const PER_USER_TIMEOUT_MS = 25_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    return Promise.race<T>([
+        promise,
+        new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+        ),
+    ]);
+}
 
 type TradeCycleUserResult = {
     userId: string;
@@ -96,11 +106,15 @@ export async function runTradeCycleForUserIds(userIds: string[]): Promise<TradeC
                 console.info(`[engine:user] sync skipped userId=${userId} reason=no-connected-broker`);
             }
 
-            const result = await runTradeCycleForUser({
-                userId,
-                runType: 'cron',
-                supabase: supabaseAdmin,
-            });
+            const result = await withTimeout(
+                runTradeCycleForUser({
+                    userId,
+                    runType: 'cron',
+                    supabase: supabaseAdmin,
+                }),
+                PER_USER_TIMEOUT_MS,
+                `runTradeCycleForUser(${userId})`,
+            );
 
             console.info(
                 `[engine:user] run complete userId=${userId} elapsedMs=${Date.now() - userStartedAt} status=${result.status} processed=${result.processed} tradesExecuted=${result.tradesExecuted}`

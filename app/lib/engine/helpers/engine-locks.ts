@@ -9,18 +9,15 @@ export async function acquireEngineLock(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + LOCK_TTL_SECONDS * 1000).toISOString();
 
+  // First attempt: plain insert should succeed only when no lock row exists.
   const { error } = await supabaseAdmin
     .from("engine_locks")
-    .upsert(
+    .insert(
       {
         user_id: userId,
         source,
         locked_at: now.toISOString(),
         expires_at: expiresAt,
-      },
-      {
-        onConflict: "user_id",
-        ignoreDuplicates: false,
       }
     );
 
@@ -48,21 +45,19 @@ export async function acquireEngineLock(
     return false;
   }
 
-  const { error: replaceError } = await supabaseAdmin
+  // Existing row is expired: take over only if the row is still expired at update time.
+  const { data: replacedRows, error: replaceError } = await supabaseAdmin
     .from("engine_locks")
-    .upsert(
-      {
-        user_id: userId,
-        source,
-        locked_at: now.toISOString(),
-        expires_at: expiresAt,
-      },
-      {
-        onConflict: "user_id",
-      }
-    );
+    .update({
+      source,
+      locked_at: now.toISOString(),
+      expires_at: expiresAt,
+    })
+    .eq("user_id", userId)
+    .lte("expires_at", now.toISOString())
+    .select("user_id");
 
-  if (replaceError) {
+  if (replaceError || !replacedRows || replacedRows.length === 0) {
     return false;
   }
 
