@@ -85,7 +85,7 @@ Invalidation: ${opp.invalidationCondition}
 {
   "action": "Enter" | "Watch" | "Avoid",
   "strategy": "<1 sentence on recommended approach or size>",
-  "reason": "<max 4 sentences: 1 flow/structure, 2 IV context, 3 main risk, 4 what must happen>",
+  "reason": "<max 4 sentences. Must mention ${opp.symbol}, the long strike ${opp.longLeg.strike}, and expiry ${opp.longLeg.expiry}. Include 1 flow/structure point, 1 IV point, 1 main risk, and 1 trigger condition>",
   "confidence": <integer 0-100>,
   "riskFlags": ["<short phrase>"] or []
 }
@@ -146,6 +146,13 @@ Invalidation: ${opp.invalidationCondition}
             ? flagsMatch[1].split(',').map(f => f.trim()).filter(Boolean)
             : [],
         };
+      }
+    }
+
+    if (parsed) {
+      // Keep reasons contract-specific so cards do not look duplicated.
+      if (!parsed.reason.toUpperCase().includes(opp.symbol.toUpperCase())) {
+        parsed.reason = `${opp.symbol}: ${parsed.reason}`;
       }
     }
 

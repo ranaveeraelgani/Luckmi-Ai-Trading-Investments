@@ -1131,6 +1131,29 @@ function OpportunityDetailPanel({
 
 // ── Opportunity Card ─────────────────────────────────────────
 
+function getTradeBlockReason(params: {
+  opp: OptionsOpportunity;
+  dataMode: 'mock' | 'live_strict';
+  brokerMode: 'paper' | 'live' | null;
+  inPosition: boolean;
+  openPositionCount: number;
+  prefs: OptionPreferences;
+}) {
+  const { opp, dataMode, brokerMode, inPosition, openPositionCount, prefs } = params;
+  const tradeMaxLoss = opp.netDebit * 100;
+  return dataMode !== 'live_strict'
+    ? 'Live options flow required (mock mode blocked)'
+    : !brokerMode
+    ? 'Connect Alpaca and run Test Connection'
+    : inPosition
+    ? 'Already in position'
+    : openPositionCount >= prefs.max_open_positions
+    ? `Limit reached (${prefs.max_open_positions} open)`
+    : tradeMaxLoss > prefs.max_loss_per_trade
+    ? `Exceeds per-contract cap ($${prefs.max_loss_per_trade})`
+    : null;
+}
+
 function OpportunityCard({
   opp,
   onOpen,
@@ -1151,20 +1174,15 @@ function OpportunityCard({
   inPosition: boolean;
 }) {
   const gex = gexBadge(opp.gexBias);
-  const tradeMaxLoss = opp.netDebit * 100;
   const autoEntryActive = prefs.auto_entry_enabled;
-  const blockReason =
-    dataMode !== 'live_strict'
-      ? 'Live options flow required (mock mode blocked)'
-      : !brokerMode
-      ? 'Connect Alpaca and run Test Connection'
-      : inPosition
-      ? 'Already in position'
-      : openPositionCount >= prefs.max_open_positions
-      ? `Limit reached (${prefs.max_open_positions} open)`
-      : tradeMaxLoss > prefs.max_loss_per_trade
-      ? `Exceeds per-contract cap ($${prefs.max_loss_per_trade})`
-      : null;
+  const blockReason = getTradeBlockReason({
+    opp,
+    dataMode,
+    brokerMode,
+    inPosition,
+    openPositionCount,
+    prefs,
+  });
 
   return (
     <div className={`rounded-3xl border transition-all overflow-hidden flex flex-col ${
@@ -1246,8 +1264,14 @@ function OpportunityCard({
         </div>
       </div>
 
-      {/* Thesis */}
-      <p className="mt-2.5 text-xs text-gray-500 line-clamp-2">{opp.thesis}</p>
+      {/* AI reason (when available), otherwise deterministic thesis */}
+      {opp.aiReason ? (
+        <p className="mt-2.5 text-xs text-blue-200/90 line-clamp-3">
+          <span className="text-blue-300 font-medium">AI:</span> {opp.aiReason}
+        </p>
+      ) : (
+        <p className="mt-2.5 text-xs text-gray-500 line-clamp-2">{opp.thesis}</p>
+      )}
       </div>
       <div className="px-4 pb-4 pt-1">
         {autoEntryActive ? (
@@ -1255,7 +1279,7 @@ function OpportunityCard({
             title="Auto Trading is ON. Engine will evaluate and place entries automatically if setup passes checks."
             className="w-full rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-center text-xs font-medium text-emerald-300"
           >
-            Auto Trading ON - discovery managed by engine
+            Auto Trading ON - discovery managed by Luckmi AI
           </div>
         ) : inPosition ? (
           <div className="w-full rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-center text-xs font-medium text-amber-400">
@@ -1438,6 +1462,9 @@ function UwTelemetryDisclosure({ scanMeta }: { scanMeta: ScanMeta }) {
 // ── Main Page ─────────────────────────────────────────────────
 
 export default function OptionsPage() {
+  const TOP_VALIDATE_COUNT = 30;
+  const TOP_SHOW_COUNT = 15;
+
   const [opportunities, setOpportunities] = useState<OptionsOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1445,9 +1472,18 @@ export default function OptionsPage() {
   const [dataMode, setDataMode] = useState<'mock' | 'live_strict'>('mock');
   const [quotesSource, setQuotesSource] = useState<'live' | 'unavailable'>('unavailable');
   const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null);
+  const [executableIds, setExecutableIds] = useState<string[]>([]);
+  const [execValidationMeta, setExecValidationMeta] = useState<{
+    validated: number;
+    executable: number;
+    skipped: boolean;
+    reason: string | null;
+  } | null>(null);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selected, setSelected] = useState<OptionsOpportunity | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [discoveriesView, setDiscoveriesView] = useState<'table' | 'cards'>('table');
+  const [showCommandCenterDetails, setShowCommandCenterDetails] = useState(false);
 
   // Paper trades
   const [paperTradeTarget, setPaperTradeTarget] = useState<OptionsOpportunity | null>(null);
@@ -1520,6 +1556,87 @@ export default function OptionsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    async function validateExecutableTop30() {
+      if (dataMode !== 'live_strict') {
+        setExecutableIds([]);
+        setExecValidationMeta(null);
+        return;
+      }
+
+      if (!brokerMode) {
+        setExecutableIds([]);
+        setExecValidationMeta({
+          validated: 0,
+          executable: 0,
+          skipped: true,
+          reason: 'broker-not-connected',
+        });
+        return;
+      }
+
+      const top = opportunities
+        .slice(0, TOP_VALIDATE_COUNT)
+        .map((opp) => ({
+          id: opp.id,
+          longOccSymbol: buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike),
+          shortOccSymbol: opp.shortLeg
+            ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
+            : null,
+        }));
+
+      if (top.length === 0) {
+        setExecutableIds([]);
+        setExecValidationMeta({
+          validated: 0,
+          executable: 0,
+          skipped: true,
+          reason: 'no-candidates',
+        });
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/options/executable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidates: top }),
+        });
+
+        if (!res.ok) {
+          setExecutableIds([]);
+          setExecValidationMeta({
+            validated: top.length,
+            executable: 0,
+            skipped: true,
+            reason: 'validation-error',
+          });
+          return;
+        }
+
+        const data = await res.json();
+        const ids = Array.isArray(data?.executableIds) ? data.executableIds as string[] : [];
+        setExecutableIds(ids);
+        setExecValidationMeta({
+          validated: Number(data?.validated ?? top.length),
+          executable: ids.length,
+          skipped: Boolean(data?.skipped),
+          reason: data?.reason ?? null,
+        });
+      } catch {
+        setExecutableIds([]);
+        setExecValidationMeta({
+          validated: top.length,
+          executable: 0,
+          skipped: true,
+          reason: 'validation-error',
+        });
+      }
+    }
+
+    void validateExecutableTop30();
+  }, [opportunities, dataMode, brokerMode]);
 
   async function loadPaperTrades() {
     setPaperTradesLoading(true);
@@ -1678,9 +1795,21 @@ export default function OptionsPage() {
     .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade)
     // Discoveries should not duplicate currently-held positions.
     .filter(o => !inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy)));
-  const visible = activePositionSymbol
-    ? baseVisible.filter(o => o.symbol.toUpperCase() === activePositionSymbol)
+  const executableSet = new Set(executableIds);
+  const showExecutableOnly = dataMode === 'live_strict' && !!brokerMode;
+
+  const execFiltered = showExecutableOnly
+    ? baseVisible.filter((o) => executableSet.has(o.id))
     : baseVisible;
+
+  const visibleUncapped = activePositionSymbol
+    ? execFiltered.filter(o => o.symbol.toUpperCase() === activePositionSymbol)
+    : execFiltered;
+
+  // Display only half of validated shortlist by default: Top 15 shown from Top 30 checked.
+  const visible = showExecutableOnly
+    ? visibleUncapped.slice(0, TOP_SHOW_COUNT)
+    : visibleUncapped;
 
   // If selected symbol no longer has any discoveries, clear the filter to avoid empty-screen confusion.
   useEffect(() => {
@@ -1689,17 +1818,16 @@ export default function OptionsPage() {
     if (!stillExists) setActivePositionSymbol(null);
   }, [activePositionSymbol, baseVisible]);
   const topHighConv = visible.filter(o => o.score.finalScore >= 75);
-  const remaining = visible.filter(o => o.score.finalScore < 75);
 
   return (
     <div className="min-h-screen bg-[#0b0f16] text-white">
       <TopNav activePage="options" />
 
       <div className="p-4 sm:p-6">
-        <div className="mx-auto max-w-6xl space-y-6">
+        <div className="mx-auto max-w-6xl space-y-4">
 
           {/* Header */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <LuckmiAiIcon size={32} />
@@ -1708,73 +1836,18 @@ export default function OptionsPage() {
                   Debit Spreads · Beta
                 </span>
               </div>
-              <p className="mt-2 text-sm text-gray-400 max-w-2xl">
-                Luckmi ranks today's best call and put debit spread setups using options flow, GEX, IV fit, and execution quality. AI explains the top setups.
+              <p className="mt-1 text-xs text-gray-400 max-w-2xl leading-5 sm:text-sm">
+                Luckmi ranks debit spreads from live options flow, GEX, IV fit, and execution quality, then validates the top list for Alpaca execution.
               </p>
             </div>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span className="text-gray-500 uppercase tracking-wide">Automation</span>
-            <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.auto_entry_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+          {/* Compact command center */}
+          <div className="sticky top-2 z-20 rounded-xl border border-white/10 bg-[#11151C]/92 px-3 py-2.5 space-y-2 shadow-[0_10px_30px_rgba(0,0,0,0.25)] backdrop-blur sm:top-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className={`rounded-full border px-2.5 py-0.5 font-medium ${prefs.auto_entry_enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
               Auto trading: {prefs.auto_entry_enabled ? `ON · up to ${prefs.auto_entry_max_positions}` : 'OFF'}
             </span>
-            <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
-              Long options scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
-            </span>
-            <span className={`rounded-full border px-2 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
-              Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
-            </span>
-          </div>
-
-          {prefs.auto_entry_enabled && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-              All discoveries are auto candidates; entries are placed only if checks pass.
-            </div>
-          )}
-
-          {/* Data source status — two rows: options flow and stock prices */}
-          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 space-y-1.5">
-            <div className="flex items-center gap-2 text-xs">
-              {dataMode === 'live_strict' ? (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-emerald-300 font-medium">Options flow: Live strict (UW)</span>
-                  <span className="text-gray-500">— no mock fallback; symbols with missing UW legs are excluded</span>
-                </>
-              ) : (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                  <span className="text-amber-300 font-medium">Options flow: Mock data</span>
-                  <span className="text-gray-500">— live options flow not configured</span>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              {quotesSource === 'live' ? (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-emerald-300 font-medium">Stock prices: Live</span>
-                  <span className="text-gray-500">— spread strikes are anchored to real current prices</span>
-                </>
-              ) : (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-red-400 shrink-0" />
-                  <span className="text-red-300 font-medium">Stock prices: Unavailable</span>
-                  <span className="text-gray-500">— real-time prices not configured; spread strikes may be approximate</span>
-                </>
-              )}
-            </div>
-            {dataMode === 'live_strict' && scanMeta && scanMeta.eligibleSymbols < scanMeta.totalUniverse && (
-              <SkippedSymbolsDisclosure scanMeta={scanMeta} />
-            )}
-            {dataMode === 'live_strict' && scanMeta?.uwTelemetry && (
-              <UwTelemetryDisclosure scanMeta={scanMeta} />
-            )}
-          </div>
-
-          {/* Actions Row */}
-          <div className="rounded-xl border border-white/10 bg-[#11151C] px-3 py-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setShowFilters(f => !f)}
@@ -1804,6 +1877,66 @@ export default function OptionsPage() {
             >
               {loading ? "Scanning…" : "Refresh"}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowCommandCenterDetails((v) => !v)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:border-white/20 transition"
+            >
+              {showCommandCenterDetails ? 'Hide Info ▲' : 'Show Info ▼'}
+            </button>
+            </div>
+
+            {showCommandCenterDetails && (
+              <>
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+                    Long scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
+                  </span>
+                  <span className={`rounded-full border px-2 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
+                    Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
+                  </span>
+                  {prefs.auto_entry_enabled && (
+                    <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-200">
+                      Discovery managed by Luckmi AI
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid gap-1 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${dataMode === 'live_strict' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span className={`font-medium ${dataMode === 'live_strict' ? 'text-emerald-300' : 'text-amber-300'}`}>Flow</span>
+                    <span className="text-gray-500 truncate">{dataMode === 'live_strict' ? 'Live strict UW' : 'Mock data'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${quotesSource === 'live' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <span className={`font-medium ${quotesSource === 'live' ? 'text-emerald-300' : 'text-red-300'}`}>Prices</span>
+                    <span className="text-gray-500 truncate">{quotesSource === 'live' ? 'Real-time spot anchored' : 'Unavailable / approximate'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="h-2 w-2 rounded-full bg-blue-400 shrink-0" />
+                    <span className="font-medium text-blue-300">Telemetry</span>
+                    <span className="text-gray-500 truncate">
+                      {scanMeta?.uwTelemetry ? `${scanMeta.uwTelemetry.totalRequests} req · ${scanMeta.uwTelemetry.rateLimit429s} 429` : 'Waiting for scan'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="h-2 w-2 rounded-full bg-[#F5C76E] shrink-0" />
+                    <span className="font-medium text-[#F5C76E]">Execution</span>
+                    <span className="text-gray-500 truncate">
+                      {showExecutableOnly && execValidationMeta ? `${execValidationMeta.executable} executable checked` : 'Validation when broker connected'}
+                    </span>
+                  </div>
+                </div>
+
+                {dataMode === 'live_strict' && scanMeta && scanMeta.eligibleSymbols < scanMeta.totalUniverse && (
+                  <SkippedSymbolsDisclosure scanMeta={scanMeta} />
+                )}
+                {dataMode === 'live_strict' && scanMeta?.uwTelemetry && (
+                  <UwTelemetryDisclosure scanMeta={scanMeta} />
+                )}
+              </>
+            )}
           </div>
 
           {/* Filter Panel */}
@@ -1942,6 +2075,12 @@ export default function OptionsPage() {
                 <span><span className="text-white font-medium">{visible.length}</span> discoveries</span>
                 <span><span className="text-emerald-300 font-medium">{topHighConv.length}</span> high conviction</span>
                 <span><span className="text-amber-300 font-medium">{openPositionCount}</span> in-position</span>
+                {showExecutableOnly && execValidationMeta && (
+                  <span>
+                    <span className="text-blue-300 font-medium">{Math.min(TOP_SHOW_COUNT, execValidationMeta.executable)}</span>
+                    {' '}shown · {execValidationMeta.executable} executable from top {execValidationMeta.validated}
+                  </span>
+                )}
                 {activePositionSymbol && (
                   <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-amber-300 text-xs">
                     Symbol filter: {activePositionSymbol}
@@ -1954,54 +2093,246 @@ export default function OptionsPage() {
                 )}
               </div>
 
-              {/* High conviction section */}
-              {topHighConv.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-emerald-400 text-lg">⚡</span>
-                    <h2 className="text-base font-semibold text-white">High Conviction</h2>
-                    <span className="text-xs text-gray-500">OCS 75+</span>
+              {visible.length > 0 && (
+                <section className="rounded-2xl border border-white/10 bg-[#11151C] overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-semibold text-white">Top Discoveries</h2>
+                      <span className="text-xs text-gray-500">Ranked by OCS</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-500">Showing {visible.length}</span>
+                      <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setDiscoveriesView('table')}
+                          className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                            discoveriesView === 'table'
+                              ? 'bg-[#F5C76E]/20 text-[#F5C76E]'
+                              : 'text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          Table
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDiscoveriesView('cards')}
+                          className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                            discoveriesView === 'cards'
+                              ? 'bg-[#F5C76E]/20 text-[#F5C76E]'
+                              : 'text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          Cards
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {topHighConv.map(o => (
-                      <OpportunityCard
-                        key={o.id}
-                        opp={o}
-                        onOpen={setSelected}
-                        onPaperTrade={setPaperTradeTarget}
-                        brokerMode={brokerMode}
-                        dataMode={dataMode}
-                        prefs={prefs}
-                        openPositionCount={openPositionCount}
-                        inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
-                      />
-                    ))}
-                  </div>
-                </section>
-              )}
 
-              {/* All other opportunities */}
-              {remaining.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <h2 className="text-base font-semibold text-white">All Opportunities</h2>
-                    <span className="text-xs text-gray-500">OCS 55–74</span>
+                  {discoveriesView === 'table' ? (
+                  <>
+                  {/* Desktop/tablet table */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full min-w-[980px] text-sm">
+                      <thead>
+                        <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-white/5">
+                          <th className="px-4 py-3">#</th>
+                          <th className="px-4 py-3">Symbol</th>
+                          <th className="px-4 py-3">Setup</th>
+                          <th className="px-4 py-3">Legs</th>
+                          <th className="px-4 py-3">Debit</th>
+                          <th className="px-4 py-3">Max Gain</th>
+                          <th className="px-4 py-3">OCS</th>
+                          <th className="px-4 py-3">AI</th>
+                          <th className="px-4 py-3">Liquidity</th>
+                          <th className="px-4 py-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visible.map((o, idx) => {
+                          const inPosition = inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy));
+                          const blockReason = getTradeBlockReason({
+                            opp: o,
+                            dataMode,
+                            brokerMode,
+                            inPosition,
+                            openPositionCount,
+                            prefs,
+                          });
+                          const autoEntryActive = prefs.auto_entry_enabled;
+                          return (
+                            <tr
+                              key={o.id}
+                              className="border-b border-white/5 hover:bg-white/5 transition"
+                            >
+                              <td className="px-4 py-3 text-gray-500">{idx + 1}</td>
+                              <td className="px-4 py-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelected(o)}
+                                  className="font-semibold text-white hover:text-[#F5C76E] transition"
+                                >
+                                  {o.symbol}
+                                </button>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-gray-300">{strategyLabel(o.strategy)}</td>
+                              <td className="px-4 py-3 text-xs text-gray-400">
+                                {o.shortLeg
+                                  ? `${o.longLeg.optionType.toUpperCase()} ${o.longLeg.strike}/${o.shortLeg.strike} · ${o.longLeg.expiry}`
+                                  : `${o.longLeg.optionType.toUpperCase()} ${o.longLeg.strike} · ${o.longLeg.expiry}`}
+                              </td>
+                              <td className="px-4 py-3 text-white">{fmt$(o.netDebit)}</td>
+                              <td className="px-4 py-3 text-emerald-300">{fmt$(o.maxGain)}</td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${scorePillClass(o.score.finalScore)}`}>
+                                  {o.score.finalScore}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs">
+                                {o.aiAction ? (
+                                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 ${aiActionClass(o.aiAction)}`}>
+                                    {o.aiAction}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-600">-</span>
+                                )}
+                              </td>
+                              <td className={`px-4 py-3 text-xs ${liquidityBadge(o.liquidityQuality)}`}>
+                                {o.liquidityQuality}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {autoEntryActive ? (
+                                  <span className="inline-flex rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300">
+                                    Luckmi AI
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => { if (!blockReason) setPaperTradeTarget(o); }}
+                                    disabled={!!blockReason}
+                                    title={blockReason ?? undefined}
+                                    className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                                      blockReason
+                                        ? 'border-white/10 bg-white/5 text-gray-600 cursor-not-allowed'
+                                        : 'border-[#F5C76E]/25 bg-[#F5C76E]/5 text-[#F5C76E] hover:bg-[#F5C76E]/15'
+                                    }`}
+                                  >
+                                    Trade
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {remaining.map(o => (
-                      <OpportunityCard
-                        key={o.id}
-                        opp={o}
-                        onOpen={setSelected}
-                        onPaperTrade={setPaperTradeTarget}
-                        brokerMode={brokerMode}
-                        dataMode={dataMode}
-                        prefs={prefs}
-                        openPositionCount={openPositionCount}
-                        inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
-                      />
-                    ))}
+
+                  {/* Small screen compact rows */}
+                  <div className="md:hidden divide-y divide-white/5">
+                    {visible.map((o, idx) => {
+                      const inPosition = inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy));
+                      const blockReason = getTradeBlockReason({
+                        opp: o,
+                        dataMode,
+                        brokerMode,
+                        inPosition,
+                        openPositionCount,
+                        prefs,
+                      });
+                      const autoEntryActive = prefs.auto_entry_enabled;
+                      return (
+                        <div key={o.id} className="p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelected(o)}
+                              className="text-left"
+                            >
+                              <div className="text-sm font-semibold text-white">#{idx + 1} {o.symbol}</div>
+                              <div className="text-[11px] text-gray-500">{strategyLabel(o.strategy)}</div>
+                            </button>
+                            <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${scorePillClass(o.score.finalScore)}`}>
+                              OCS {o.score.finalScore}
+                            </span>
+                          </div>
+
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-lg bg-[#1A1F2B] px-2 py-1.5">
+                              <div className="text-[10px] uppercase tracking-wide text-gray-500">Legs</div>
+                              <div className="text-gray-300 mt-0.5">
+                                {o.shortLeg
+                                  ? `${o.longLeg.strike}/${o.shortLeg.strike}`
+                                  : `${o.longLeg.optionType.toUpperCase()} ${o.longLeg.strike}`}
+                              </div>
+                            </div>
+                            <div className="rounded-lg bg-[#1A1F2B] px-2 py-1.5">
+                              <div className="text-[10px] uppercase tracking-wide text-gray-500">Expiry</div>
+                              <div className="text-gray-300 mt-0.5">{o.longLeg.expiry}</div>
+                            </div>
+                            <div className="rounded-lg bg-[#1A1F2B] px-2 py-1.5">
+                              <div className="text-[10px] uppercase tracking-wide text-gray-500">Debit</div>
+                              <div className="text-white mt-0.5">{fmt$(o.netDebit)}</div>
+                            </div>
+                            <div className="rounded-lg bg-[#1A1F2B] px-2 py-1.5">
+                              <div className="text-[10px] uppercase tracking-wide text-gray-500">Max Gain</div>
+                              <div className="text-emerald-300 mt-0.5">{fmt$(o.maxGain)}</div>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              {o.aiAction && (
+                                <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${aiActionClass(o.aiAction)}`}>
+                                  {o.aiAction}
+                                </span>
+                              )}
+                              <span className={`text-[11px] ${liquidityBadge(o.liquidityQuality)}`}>{o.liquidityQuality}</span>
+                            </div>
+                            {autoEntryActive ? (
+                              <span className="inline-flex rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300">
+                                Luckmi AI
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => { if (!blockReason) setPaperTradeTarget(o); }}
+                                disabled={!!blockReason}
+                                title={blockReason ?? undefined}
+                                className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                                  blockReason
+                                    ? 'border-white/10 bg-white/5 text-gray-600 cursor-not-allowed'
+                                    : 'border-[#F5C76E]/25 bg-[#F5C76E]/5 text-[#F5C76E] hover:bg-[#F5C76E]/15'
+                                }`}
+                              >
+                                Trade
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
+                  </>
+                  ) : (
+                  <div className="p-4">
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {visible.map(o => (
+                        <OpportunityCard
+                          key={o.id}
+                          opp={o}
+                          onOpen={setSelected}
+                          onPaperTrade={setPaperTradeTarget}
+                          brokerMode={brokerMode}
+                          dataMode={dataMode}
+                          prefs={prefs}
+                          openPositionCount={openPositionCount}
+                          inPosition={inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  )}
                 </section>
               )}
 

@@ -100,6 +100,20 @@ export async function getAlpacaOrders(
   });
 }
 
+/**
+ * Retrieve an option contract by OCC symbol from Alpaca.
+ * Throws when contract is unknown/inactive/unavailable to the account.
+ */
+export async function getAlpacaOptionContractBySymbol(
+  credentials: AlpacaCredentials,
+  optionSymbol: string,
+) {
+  return alpacaRequest<any>({
+    credentials,
+    path: `/v2/options/contracts/${encodeURIComponent(optionSymbol)}`,
+  });
+}
+
 export async function placeAlpacaOrder({
   credentials,
   symbol,
