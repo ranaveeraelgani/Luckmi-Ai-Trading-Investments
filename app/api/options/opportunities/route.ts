@@ -537,6 +537,8 @@ async function runScan(req: NextRequest): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
+  const requireCached = req.nextUrl.searchParams.get('require_cached') === '1';
+
   // Snapshot-first: always serve cached snapshot if present.
   // If stale, trigger background refresh while UI gets immediate response.
   const cached = globalThis._optsCacheResult;
@@ -554,6 +556,21 @@ export async function GET(req: NextRequest) {
         'X-Options-Cache': fresh ? 'HIT' : 'STALE',
       },
     });
+  }
+
+  // Cron/internal callers that cannot afford a full scan wait pass require_cached=1.
+  // Return an empty-safe payload immediately so the caller finishes within its timeout.
+  // A background scan is still kicked off so the next call will have a warm cache.
+  if (requireCached) {
+    if (!globalThis._optsInflight) {
+      void runScan(req).catch((err) => {
+        console.warn('[api/options/opportunities] background warm failed:', err?.message ?? err);
+      });
+    }
+    return NextResponse.json(
+      { opportunities: [], total: 0, generatedAt: new Date().toISOString(), fromCache: false, skipped: true, reason: 'no-cache-yet' },
+      { status: 200, headers: { 'X-Options-Cache': 'WARMING' } },
+    );
   }
 
   try {

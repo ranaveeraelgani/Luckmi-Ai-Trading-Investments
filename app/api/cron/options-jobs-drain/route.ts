@@ -34,8 +34,16 @@ import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 
 export const maxDuration = 60;
 
-/** How many trade jobs to claim and process in one drain invocation. */
-const CLAIM_BATCH_SIZE = 15;
+/** How many trade jobs to claim and process in one drain invocation.
+ *  Kept small so 2 Polygon calls per trade (long + short leg) × 5s max timeout each
+ *  stays well within the 60s maxDuration even under worst-case Polygon latency.
+ */
+const CLAIM_BATCH_SIZE = 8;
+
+/** Wall-clock budget in ms — break the drain loop early if we approach maxDuration.
+ *  Unleased jobs keep their lease and auto-release after LEASE_SECONDS so the
+ *  next invocation picks them up cleanly. */
+const DRAIN_BUDGET_MS = 45_000;
 
 /**
  * Lease time in seconds.  Each job is locked for this duration so a second
@@ -72,8 +80,19 @@ export async function POST(req: Request) {
     let skippedAutoExitDisabled = 0;
     let skippedOther = 0;
     let errors = 0;
+    let budgetExceeded = false;
+
+    const drainStartedAt = Date.now();
 
     for (const job of jobs) {
+      // Wall-clock safety: if we are approaching the maxDuration limit, stop
+      // processing. Remaining leased jobs auto-release after LEASE_SECONDS so
+      // the next drain invocation will pick them up.
+      if (Date.now() - drainStartedAt >= DRAIN_BUDGET_MS) {
+        budgetExceeded = true;
+        console.warn('[options-jobs-drain] wall-clock budget exceeded — stopping early');
+        break;
+      }
       const tradeId = (job as any).payload?.tradeId as string | undefined;
 
       if (!tradeId) {
@@ -121,6 +140,7 @@ export async function POST(req: Request) {
       success: true,
       claimedJobs: jobs.length,
       processed: jobs.length,
+      budgetExceeded,
       closed,
       closeRequested,
       peakUpdated,

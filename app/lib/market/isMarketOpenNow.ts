@@ -48,7 +48,7 @@ export async function isMarketOpenNowLive() {
   try {
     const res = await fetch(
       `https://api.massive.com/v1/marketstatus/now?apiKey=${apiKey}`,
-      { cache: "no-store" }
+      { cache: "no-store", signal: AbortSignal.timeout(6000) }
     );
 
     if (!res.ok) {

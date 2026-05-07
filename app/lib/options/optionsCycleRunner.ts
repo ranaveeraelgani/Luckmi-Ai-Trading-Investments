@@ -117,7 +117,7 @@ async function fetchOptionMidPrice(
       `${encodeURIComponent(underlying)}/${encodeURIComponent(occSymbol)}` +
       `?apiKey=${POLYGON_API_KEY}`;
 
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
 
     const data = await res.json();

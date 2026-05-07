@@ -61,21 +61,27 @@ function getOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-/** Fetch opportunities list from the scan cache endpoint. */
-async function fetchOpportunities(origin: string): Promise<{ opportunities: OptionsOpportunity[]; dataMode: 'mock' | 'live_strict' | 'unknown' }> {
+/** Fetch opportunities from the scan cache endpoint.
+ *  Uses require_cached=1 so the cron never blocks on a cold full scan (which
+ *  can take 60-65 s and exceed Supabase's 55 s cron timeout).  If no snapshot
+ *  is ready the endpoint returns an empty payload AND kicks a background warm,
+ *  so the next scheduled run will find a hot cache.
+ */
+async function fetchOpportunities(origin: string): Promise<{ opportunities: OptionsOpportunity[]; dataMode: 'mock' | 'live_strict' | 'unknown'; fromCache: boolean }> {
   try {
-    const res = await fetch(`${origin}/api/options/opportunities`, {
+    const res = await fetch(`${origin}/api/options/opportunities?require_cached=1`, {
       headers: { 'x-internal-cron': 'true' },
-      // deliberately no revalidate — let the endpoint manage its own cache TTL
     });
-    if (!res.ok) return { opportunities: [], dataMode: 'unknown' };
+    if (!res.ok) return { opportunities: [], dataMode: 'unknown', fromCache: false };
     const data = await res.json();
+    const fromCache = data?.skipped !== true;
     return {
       opportunities: Array.isArray(data?.opportunities) ? (data.opportunities as OptionsOpportunity[]) : [],
       dataMode: data?.dataMode === 'live_strict' ? 'live_strict' : data?.dataMode === 'mock' ? 'mock' : 'unknown',
+      fromCache,
     };
   } catch {
-    return { opportunities: [], dataMode: 'unknown' };
+    return { opportunities: [], dataMode: 'unknown', fromCache: false };
   }
 }
 
@@ -146,7 +152,22 @@ export async function POST(req: Request) {
   }
 
   // ── Fetch opportunities once — shared across all users ───────────────────
-  const { opportunities: allOpportunities, dataMode } = await fetchOpportunities(origin);
+  // require_cached=1 ensures we never block here waiting for a full 60s scan.
+  const { opportunities: allOpportunities, dataMode, fromCache } = await fetchOpportunities(origin);
+
+  if (!fromCache) {
+    // Cache was cold — background scan has been kicked off. Skip this cycle
+    // so Supabase cron does not time out; next run will have a warm cache.
+    console.info('[options-auto-entry] no cached opportunities yet — skipping cycle, background warm started');
+    return NextResponse.json({
+      success: true,
+      usersProcessed: 0,
+      tradesPlaced: 0,
+      skippedUsers: users.length,
+      reason: 'Opportunities cache was cold — background scan started, retry next cycle.',
+      details: users.map((u) => ({ userId: u.user_id, placed: 0, skippedReason: 'cache-warming' })),
+    });
+  }
 
   if (dataMode !== 'live_strict') {
     return NextResponse.json({
