@@ -182,18 +182,18 @@ function scoreLongOption(params: {
   const absDelta = Math.abs(contract.delta ?? 0);
   if (absDelta > 0) {
     if (absDelta >= 0.35 && absDelta <= 0.50) score += 35;
-    else if (absDelta >= 0.28 && absDelta <= 0.60) score += 22;
+    else if (absDelta >= 0.28 && absDelta <= 0.60) score += 26;
     else score += 8;
   } else {
-    score += 14; // neutral fallback when greeks are missing
+    score += 22; // neutral fallback when greeks are missing
   }
 
   // ── Liquidity (0-40 pts) ──────────────────────────────────────────────────
   const liq = deriveLiquidityQuality(contract);
   if (liq === 'excellent') score += 40;
   else if (liq === 'good') score += 28;
-  else if (liq === 'fair') score += 14;
-  else score += 4;
+  else if (liq === 'fair') score += 18;
+  else score += 8;
 
   // ── Moneyness proximity (0-25 pts) ───────────────────────────────────────
   if (spotPrice > 0) {
@@ -295,13 +295,19 @@ export async function GET(req: NextRequest) {
           const dte = Math.round(expMs / (1000 * 60 * 60 * 24));
           const dteBucket = deriveDteBucket(dte);
           const liquidityQuality = deriveLiquidityQuality(contract);
-          const ivRank = Number.isFinite(contract.impliedVolatility)
-            ? Math.max(0, Math.min(100, Math.round((contract.impliedVolatility || 0) * 100)))
+          const ivAvailable = Number.isFinite(contract.impliedVolatility) && Number(contract.impliedVolatility) > 0;
+          const ivRank = ivAvailable
+            ? Math.max(0, Math.min(100, Math.round(Number(contract.impliedVolatility) * 100)))
             : 50;
+          const volFitScore = ivAvailable
+            ? (ivRank < 30 ? 80 : ivRank < 50 ? 55 : 30)
+            : 50;
+          const hasDelta = hasRealDelta(contract);
+          const deltaLabel = hasDelta ? Math.abs(Number(contract.delta)).toFixed(2) : 'n/a';
 
           const thesis = direction === 'bullish'
-            ? `${symbol} long call at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`
-            : `${symbol} long put at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`;
+            ? `${symbol} long call at $${contract.strike} — delta ${deltaLabel} | IV rank ${ivRank}`
+            : `${symbol} long put at $${contract.strike} — delta ${deltaLabel} | IV rank ${ivRank}`;
 
           const now = new Date();
           const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -312,15 +318,15 @@ export async function GET(req: NextRequest) {
             direction,
             strategy,
             score: {
-              flowScore: Math.min(100, score + 5),
+              flowScore: 50,
               structureScore: 50, // single-leg — no spread structure scoring
-              volatilityFitScore: ivRank < 30 ? 80 : ivRank < 50 ? 55 : 30,
+              volatilityFitScore: volFitScore,
               executionQualityScore: liquidityQuality === 'excellent' ? 90 : liquidityQuality === 'good' ? 70 : 40,
               finalScore: score,
-              flowDetail: {},
-              structureDetail: {},
-              volatilityDetail: {},
-              executionDetail: {},
+              flowDetail: { dataAvailable: 0, neutralApplied: 1 },
+              structureDetail: { dataAvailable: 1 },
+              volatilityDetail: { dataAvailable: ivAvailable ? 1 : 0, neutralApplied: ivAvailable ? 0 : 1 },
+              executionDetail: { dataAvailable: 1, liquidityQuality: liquidityQuality === 'excellent' ? 4 : liquidityQuality === 'good' ? 3 : liquidityQuality === 'fair' ? 2 : 1 },
             },
             longLeg: {
               action: 'buy',

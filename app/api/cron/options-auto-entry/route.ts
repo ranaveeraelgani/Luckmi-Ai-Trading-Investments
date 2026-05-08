@@ -36,6 +36,8 @@ import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getBrokerExecutionMode } from '@/app/lib/broker/getBrokerExecutionMode';
 import { checkBrokerAccountCanTrade } from '@/app/lib/broker/checkBrokerAccountCanTrade';
+import { getUserBrokerCredentials } from '@/app/lib/broker/getUserBrokerCredentials';
+import { getAlpacaOptionContractBySymbol } from '@/app/lib/broker/alpaca';
 import { placeOptionsBrokerEntry } from '@/app/lib/options/placeOptionsBrokerEntry';
 import type { OptionsOpportunity } from '@/app/lib/options/types';
 
@@ -53,6 +55,12 @@ export const maxDuration = 120;
 const MAX_USERS_PER_RUN = 50;
 const AUTO_ENTRY_MIN_SCORE_FLOOR = 55;
 
+type BrokerCredentials = {
+  apiKey: string;
+  apiSecret: string;
+  isPaper: boolean;
+};
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /** Resolve the deployment origin for internal fetches. */
@@ -60,6 +68,27 @@ function getOrigin(req: Request): string {
   const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'localhost:3000';
   const proto = req.headers.get('x-forwarded-proto') ?? 'http';
   return `${proto}://${host}`;
+}
+
+async function isOccContractExecutable(
+  credentials: BrokerCredentials,
+  occSymbol: string,
+  cache: Map<string, boolean>,
+): Promise<boolean> {
+  const key = `${credentials.isPaper ? 'paper' : 'live'}|${occSymbol}`;
+  const hit = cache.get(key);
+  if (typeof hit === 'boolean') return hit;
+
+  try {
+    const contract = await getAlpacaOptionContractBySymbol(credentials, occSymbol);
+    const status = String(contract?.status ?? '').toLowerCase();
+    const ok = status ? status === 'active' : true;
+    cache.set(key, ok);
+    return ok;
+  } catch {
+    cache.set(key, false);
+    return false;
+  }
 }
 
 /** Fetch opportunities from the scan cache endpoint.
@@ -183,7 +212,17 @@ export async function POST(req: Request) {
 
   let totalPlaced = 0;
   let totalSkippedUsers = 0;
-  const userResults: Array<{ userId: string; placed: number; skippedReason?: string }> = [];
+  let totalEligibleCandidates = 0;
+  let totalExecutableCandidates = 0;
+  let totalRejectedNonExecutable = 0;
+  const userResults: Array<{
+    userId: string;
+    placed: number;
+    skippedReason?: string;
+    eligibleCandidates?: number;
+    executableCandidates?: number;
+    nonExecutableRejected?: number;
+  }> = [];
 
   for (const prefs of users) {
     const userId: string = prefs.user_id;
@@ -251,15 +290,81 @@ export async function POST(req: Request) {
         .slice(0, autoMax);
 
       if (eligible.length === 0) {
-        userResults.push({ userId, placed: 0, skippedReason: 'no eligible opportunities met score/cost threshold' });
+        userResults.push({
+          userId,
+          placed: 0,
+          skippedReason: 'no eligible opportunities met score/cost threshold',
+          eligibleCandidates: 0,
+          executableCandidates: 0,
+          nonExecutableRejected: 0,
+        });
         continue;
       }
+
+      totalEligibleCandidates += eligible.length;
+
+      let credentials: BrokerCredentials;
+      try {
+        credentials = await getUserBrokerCredentials(userId);
+      } catch {
+        totalSkippedUsers++;
+        userResults.push({ userId, placed: 0, skippedReason: 'broker credentials unavailable for executable contract check' });
+        continue;
+      }
+
+      const executableCache = new Map<string, boolean>();
+      const executableEligible: Array<{
+        opp: OptionsOpportunity;
+        longOccSymbol: string;
+        shortOccSymbol: string | null;
+      }> = [];
+      let nonExecutableRejected = 0;
+
+      for (const opp of eligible) {
+        const longOccSymbol = buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike);
+        const shortOccSymbol = opp.shortLeg
+          ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
+          : null;
+
+        const longOk = await isOccContractExecutable(credentials, longOccSymbol, executableCache);
+        if (!longOk) {
+          nonExecutableRejected++;
+          continue;
+        }
+
+        if (shortOccSymbol) {
+          const shortOk = await isOccContractExecutable(credentials, shortOccSymbol, executableCache);
+          if (!shortOk) {
+            nonExecutableRejected++;
+            continue;
+          }
+        }
+
+        executableEligible.push({ opp, longOccSymbol, shortOccSymbol });
+      }
+
+      if (executableEligible.length === 0) {
+        totalRejectedNonExecutable += nonExecutableRejected;
+        userResults.push({
+          userId,
+          placed: 0,
+          skippedReason: 'no executable Alpaca contracts among eligible opportunities',
+          eligibleCandidates: eligible.length,
+          executableCandidates: 0,
+          nonExecutableRejected,
+        });
+        continue;
+      }
+
+      totalExecutableCandidates += executableEligible.length;
+      totalRejectedNonExecutable += nonExecutableRejected;
 
       // ── Place trades ─────────────────────────────────────────────────────
       let placed = 0;
       // Track symbols entered this cycle to prevent same-ticker duplicates
       const placedSymbolsThisCycle = new Set<string>();
-      for (const opp of eligible) {
+      for (const item of executableEligible) {
+        const opp = item.opp;
         if (placedSymbolsThisCycle.has(opp.symbol.toUpperCase())) continue;
         try {
           const result = await placeOptionsBrokerEntry({
@@ -267,10 +372,8 @@ export async function POST(req: Request) {
             symbol: opp.symbol,
             direction: opp.direction,
             strategy: opp.strategy,
-            longOccSymbol: buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike),
-            shortOccSymbol: opp.shortLeg
-              ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
-              : null,
+            longOccSymbol: item.longOccSymbol,
+            shortOccSymbol: item.shortOccSymbol,
             longStrike: opp.longLeg.strike,
             longExpiry: opp.longLeg.expiry,
             shortStrike: opp.shortLeg?.strike ?? null,
@@ -301,7 +404,13 @@ export async function POST(req: Request) {
       }
 
       totalPlaced += placed;
-      userResults.push({ userId, placed });
+      userResults.push({
+        userId,
+        placed,
+        eligibleCandidates: eligible.length,
+        executableCandidates: executableEligible.length,
+        nonExecutableRejected,
+      });
     } catch (userErr: any) {
       console.error(`[options-auto-entry] unhandled error for user=${userId}:`, userErr?.message);
       totalSkippedUsers++;
@@ -310,7 +419,7 @@ export async function POST(req: Request) {
   }
 
   console.info(
-    `[options-auto-entry] done users=${users.length} placed=${totalPlaced} skippedUsers=${totalSkippedUsers}`,
+    `[options-auto-entry] done users=${users.length} placed=${totalPlaced} skippedUsers=${totalSkippedUsers} eligible=${totalEligibleCandidates} executable=${totalExecutableCandidates} rejectedNonExecutable=${totalRejectedNonExecutable}`,
   );
 
   return NextResponse.json({
@@ -318,6 +427,11 @@ export async function POST(req: Request) {
     usersProcessed: users.length,
     tradesPlaced: totalPlaced,
     skippedUsers: totalSkippedUsers,
+    metrics: {
+      eligibleCandidates: totalEligibleCandidates,
+      executableCandidates: totalExecutableCandidates,
+      nonExecutableRejected: totalRejectedNonExecutable,
+    },
     details: userResults,
   });
 }

@@ -94,19 +94,22 @@ function Pill({ children, className = "" }: { children: React.ReactNode; classNa
   );
 }
 
-function MiniBar({ label, value }: { label: string; value: number }) {
+function MiniBar({ label, value, unavailable = false }: { label: string; value: number; unavailable?: boolean }) {
   const cls =
+    unavailable ? "bg-gray-500" :
     value >= 75 ? "bg-emerald-500" :
     value >= 60 ? "bg-[#F5C76E]" :
     "bg-red-500";
+  const displayValue = unavailable ? "N/A" : String(value);
+  const width = unavailable ? 50 : Math.max(0, Math.min(100, value));
   return (
     <div>
       <div className="flex justify-between mb-1">
         <span className="text-[10px] text-gray-500 uppercase tracking-wide">{label}</span>
-        <span className="text-[10px] text-gray-400">{value}</span>
+        <span className="text-[10px] text-gray-400">{displayValue}</span>
       </div>
       <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
-        <div className={`h-full rounded-full ${cls}`} style={{ width: `${value}%` }} />
+        <div className={`h-full rounded-full ${cls}`} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
@@ -1084,9 +1087,17 @@ function OpportunityDetailPanel({
           <section className="rounded-2xl border border-white/5 bg-[#11151C] p-4">
             <h3 className="text-sm font-semibold text-white mb-3">Luckmi Score Breakdown</h3>
             <div className="space-y-2.5">
-              <MiniBar label="Flow (35%)" value={opp.score.flowScore} />
+              <MiniBar
+                label="Flow (35%)"
+                value={opp.score.flowScore}
+                unavailable={(opp.score.flowDetail?.dataAvailable ?? 1) === 0}
+              />
               <MiniBar label="Structure (25%)" value={opp.score.structureScore} />
-              <MiniBar label="Volatility Fit (20%)" value={opp.score.volatilityFitScore} />
+              <MiniBar
+                label="Volatility Fit (20%)"
+                value={opp.score.volatilityFitScore}
+                unavailable={(opp.score.volatilityDetail?.dataAvailable ?? 1) === 0}
+              />
               <MiniBar label="Execution Quality (20%)" value={opp.score.executionQualityScore} />
             </div>
             <div className="mt-3 flex items-center gap-2">
