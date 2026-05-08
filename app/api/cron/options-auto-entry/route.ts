@@ -51,6 +51,7 @@ function buildOccSymbol(underlying: string, expiry: string, optionType: 'call' |
 export const maxDuration = 120;
 
 const MAX_USERS_PER_RUN = 50;
+const AUTO_ENTRY_MIN_SCORE_FLOOR = 55;
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -228,7 +229,7 @@ export async function POST(req: Request) {
       const openSymbols = await getOpenTradeSymbols(userId);
 
       // ── Filter opportunities for this user ───────────────────────────────
-      const minScore: number = prefs.min_score_threshold ?? 35;
+      const minScore: number = Math.max(prefs.min_score_threshold ?? 35, AUTO_ENTRY_MIN_SCORE_FLOOR);
       const autoMax: number = Math.min(prefs.auto_entry_max_positions ?? 3, slotsAvailable);
       const now = new Date();
 

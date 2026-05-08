@@ -5,8 +5,8 @@ const DEFAULT_UNIVERSE = [
   'TSLA', 'AMZN', 'META', 'AMD', 'PLTR',
   'GOOGL', 'AVGO', 'COIN', 'NFLX', 'CRM',
 ];
-const TARGET_ELIGIBLE_UNIVERSE_SIZE = 15;
-const CANDIDATE_UNIVERSE_SIZE = 20; // tight cap keeps scan fast; static fallback fills gaps
+const TARGET_ELIGIBLE_UNIVERSE_SIZE = 50;
+const CANDIDATE_UNIVERSE_SIZE = 80; // long-only overhaul: broader symbol discovery for top-15 selection
 const SCREENER_LIMIT = 100;
 const ALLOWED_ISSUE_TYPES = new Set(['Common Stock', 'ETF', 'ADR']);
 

@@ -32,8 +32,8 @@ function fmt$(v: number) {
 }
 
 function scoreTier(n: number) {
-  if (n >= 75) return "high";
-  if (n >= 62) return "mid";
+  if (n >= 70) return "high";
+  if (n >= 55) return "mid";
   return "low";
 }
 
@@ -45,8 +45,8 @@ function scoreRingClass(n: number) {
 }
 
 function scorePillClass(n: number) {
-  if (n >= 75) return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
-  if (n >= 62) return "border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]";
+  if (n >= 70) return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  if (n >= 55) return "border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]";
   return "border-red-500/30 bg-red-500/10 text-red-300";
 }
 
@@ -134,7 +134,7 @@ const DEFAULT_OPTION_PREFS: OptionPreferences = {
   max_open_positions: 5,
   preferred_dte_min: 7,
   preferred_dte_max: 60,
-  min_score_threshold: 35,
+  min_score_threshold: 55,
   hard_loss_stop_pct: 50,
   profit_trail_activation_pct: 40,
   profit_trail_distance_pct: 25,
@@ -299,19 +299,15 @@ function OptionPreferencesPanel({
         </div>
       </div>
 
-      {/* Long options toggle */}
+      {/* Strategy mode */}
       <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
         <div>
-          <div className="text-xs font-semibold text-white">Include Long Options</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">Show long call / long put setups alongside spreads (Phase D)</div>
+          <div className="text-xs font-semibold text-white">Strategy Mode</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">Long options only (debit spreads paused to reduce UW data cost)</div>
         </div>
-        <button
-          type="button"
-          onClick={() => onChange({ include_long_options: !prefs.include_long_options })}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${prefs.include_long_options ? 'bg-[#F5C76E]' : 'bg-white/10'}`}
-        >
-          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${prefs.include_long_options ? 'translate-x-6' : 'translate-x-1'}`} />
-        </button>
+        <span className="rounded-full border border-[#F5C76E]/35 bg-[#F5C76E]/10 px-2.5 py-1 text-[11px] font-medium text-[#F5C76E]">
+          Long Only
+        </span>
       </div>
 
       {/* ── Auto Trading ─────────────────────────────────────────────────── */}
@@ -1339,7 +1335,7 @@ type Filters = {
 
 const DEFAULT_FILTERS: Filters = {
   direction: 'all',
-  minScore: 35,   // matches server MIN_SCORE (trial plan); raise to 55 on paid UW plan
+  minScore: 45,
   maxIvRank: 80,
   dteBucket: 'all',
   liquidityMin: 'all',
@@ -1544,28 +1540,11 @@ export default function OptionsPage() {
     setLoading(true);
     setError(null);
     try {
-      // Fetch spreads
+      // Long-only feed
       const res = await fetch('/api/options/opportunities', { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load opportunities');
       const data = await res.json();
-      let allOpps: OptionsOpportunity[] = data.opportunities ?? [];
-
-      // Fetch long options if enabled in prefs
-      if (prefs.include_long_options) {
-        try {
-          const longRes = await fetch('/api/options/long-options', { cache: 'no-store' });
-          if (longRes.ok) {
-            const longData = await longRes.json();
-            const longOpps: OptionsOpportunity[] = longData.opportunities ?? [];
-            // Merge and re-sort by finalScore descending
-            allOpps = [...allOpps, ...longOpps].sort(
-              (a, b) => b.score.finalScore - a.score.finalScore
-            );
-          }
-        } catch {
-          // Non-fatal — spreads still displayed
-        }
-      }
+      const allOpps: OptionsOpportunity[] = data.opportunities ?? [];
 
       setOpportunities(allOpps);
       setGeneratedAt(data.generatedAt ?? null);
@@ -1865,7 +1844,6 @@ export default function OptionsPage() {
   // Discovery visibility should be controlled by UI filters, not by auto-trading rule thresholds.
   const effectiveMinScore = filters.minScore;
   const baseVisible = applyFilters(opportunities, { ...filters, minScore: effectiveMinScore })
-    .filter(o => (o.netDebit * 100) <= prefs.max_loss_per_trade)
     // Discoveries should not duplicate currently-held positions.
     .filter(o => !inPositionKeys.has(toPositionKey(o.symbol, o.direction, o.strategy)));
   const executableSet = new Set(executableIds);
@@ -1906,11 +1884,11 @@ export default function OptionsPage() {
                 <LuckmiAiIcon size={32} />
                 <h1 className="text-2xl font-semibold sm:text-3xl">Options</h1>
                 <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-0.5 text-[11px] text-blue-300 font-medium">
-                  Debit Spreads · Beta
+                  Long Options · Beta
                 </span>
               </div>
               <p className="mt-1 text-xs text-gray-400 max-w-2xl leading-5 sm:text-sm">
-                Luckmi ranks debit spreads from live options flow, GEX, IV fit, and execution quality, then validates the top list for Alpaca execution.
+                Luckmi ranks long options from live UW flow and contract quality, then surfaces the best setups for optional auto-entry.
               </p>
             </div>
           </div>
@@ -1970,8 +1948,8 @@ export default function OptionsPage() {
             {showCommandCenterDetails && (
               <>
                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className={`rounded-full border px-2 py-0.5 font-medium ${prefs.include_long_options ? 'border-[#F5C76E]/35 bg-[#F5C76E]/10 text-[#F5C76E]' : 'border-white/10 bg-white/5 text-gray-400'}`}>
-                    Long scanner: {prefs.include_long_options ? 'ON' : 'OFF'}
+                  <span className="rounded-full border border-[#F5C76E]/35 bg-[#F5C76E]/10 px-2 py-0.5 font-medium text-[#F5C76E]">
+                    Strategy: Long options only
                   </span>
                   <span className={`rounded-full border px-2 py-0.5 font-medium ${brokerMode === 'paper' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : brokerMode === 'live' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-white/10 bg-white/5 text-gray-400'}`}>
                     Broker: {brokerMode ? `${brokerMode.toUpperCase()} (Alpaca)` : 'OFF'}
@@ -2053,7 +2031,7 @@ export default function OptionsPage() {
                     Min OCS Score: {filters.minScore}
                   </label>
                   <input
-                    type="range" min={35} max={85} step={5}
+                    type="range" min={35} max={90} step={5}
                     value={filters.minScore}
                     onChange={e => setFilters(f => ({ ...f, minScore: Number(e.target.value) }))}
                     className="w-full accent-[#F5C76E]"

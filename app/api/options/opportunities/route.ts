@@ -52,6 +52,7 @@ const GREEKS_DELAY_MS = 200;   // shorter gap for per-contract greeks calls (4 p
 const RETRY_429_MAX_ATTEMPTS = 3;
 const RETRY_429_BASE_DELAY_MS = 180;
 const SHORTLIST_PER_SIDE = 12;
+const FORCE_LONG_ONLY = true;
 
 // No hardcoded price table — we fetch real spot prices from /api/quotes at scan start.
 
@@ -587,6 +588,62 @@ export async function GET(req: NextRequest) {
 
 async function _executeScan(req: NextRequest): Promise<string> {
   try {
+    if (FORCE_LONG_ONLY) {
+      const base = getBaseUrl(req);
+      const longRes = await fetch(`${base}/api/options/long-options`, { cache: 'no-store' });
+      if (!longRes.ok) {
+        throw new Error(`long-options scan failed (${longRes.status})`);
+      }
+
+      const longData = await longRes.json();
+      const opportunities = Array.isArray(longData?.opportunities) ? longData.opportunities : [];
+      const generatedAt = new Date().toISOString();
+
+      const payload: OpportunitiesPayload = {
+        opportunities,
+        generatedAt,
+        total: opportunities.length,
+        dataMode: longData?.dataMode === 'live_strict' ? 'live_strict' : 'mock',
+        quotesSource: 'live',
+        spotPrices: {},
+        scanMeta: {
+          totalUniverse: Number(longData?.scannedSymbols ?? 0),
+          eligibleSymbols: Number(longData?.scannedSymbols ?? 0),
+          skippedSymbols: [],
+          universe: {
+            source: 'long-only-overhaul',
+            cachePolicy: undefined,
+            symbols: [],
+            candidatesConsidered: Number(longData?.scannedSymbols ?? 0),
+            targetEligibleSymbols: Number(longData?.scannedSymbols ?? 0),
+          },
+          uwTelemetry: {
+            totalRequests: 0,
+            dedupHits: 0,
+            dedupMisses: 0,
+            retries: 0,
+            rateLimit429s: 0,
+            requestErrors: 0,
+            lowRateLimitWarnings: 0,
+            inflightPeak: 0,
+            inflightCurrent: 0,
+            lastRateLimitRemaining: null,
+            lastRateLimitReset: null,
+            lastRateSampleAtMs: null,
+          },
+          aiEnrichment: {
+            mode: 'deferred',
+            queued: 0,
+            completed: 0,
+          },
+        },
+      };
+
+      const body = JSON.stringify(payload);
+      globalThis._optsCacheResult = { body, cachedAt: Date.now() };
+      return body;
+    }
+
     const scanStartedAt = Date.now();
     const uwTelemetryStart = uwGetTelemetrySnapshot();
     const base = getBaseUrl(req);

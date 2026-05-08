@@ -14,10 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOptionsAiRecommendation } from '@/app/lib/options/getOptionsAiRecommendation';
 import type {
   OptionsOpportunity,
-  UWOptionsFlowItem,
   UWContractCandidate,
-  UWNetPremiumTick,
-  UWVolatilityData,
   OptionDirection,
   StrategyFamily,
   DteBucket,
@@ -25,13 +22,14 @@ import type {
 } from '@/app/lib/options/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MIN_SCORE = 35;
 const AI_ENRICH_THRESHOLD = 55;
 const MAX_AI_CALLS = 5;
-const CALL_DELAY_MS = 550;
+const CALL_DELAY_MS = 500;
 const SYMBOL_BATCH_SIZE = 2;
 const RETRY_429_MAX_ATTEMPTS = 3;
 const RETRY_429_BASE_DELAY_MS = 180;
+const TARGET_SYMBOL_SCAN_COUNT = Math.max(40, Math.min(80, Number(process.env.OPTIONS_LONG_SCAN_SYMBOLS ?? 50) || 50));
+const TOP_OUTPUT_COUNT = 15;
 
 // Target delta range for long options — near ATM for directional leverage
 const DELTA_MIN = 0.30;
@@ -50,6 +48,14 @@ const STATIC_UNIVERSE = [
   'NVDA', 'SPY', 'QQQ', 'AAPL', 'MSFT',
   'TSLA', 'AMZN', 'META', 'AMD', 'PLTR',
   'GOOGL', 'AVGO', 'COIN', 'NFLX', 'CRM',
+  'INTC', 'MU', 'SMCI', 'BABA', 'UBER',
+  'SHOP', 'SQ', 'PYPL', 'ADBE', 'ORCL',
+  'PANW', 'SNOW', 'MDB', 'NOW', 'CRWD',
+  'IWM', 'DIA', 'XLF', 'XLE', 'TLT',
+  'BA', 'JPM', 'WMT', 'DIS', 'NKE',
+  'MRNA', 'PFE', 'UNH', 'COST', 'CAT',
+  'GE', 'F', 'GM', 'RIVN', 'SOFI',
+  'HOOD', 'MSTR', 'ARM', 'DELL', 'ANET',
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,6 +67,11 @@ function sleep(ms: number) {
 function getBaseUrl(req: NextRequest) {
   const url = new URL(req.url);
   return `${url.protocol}//${url.host}`;
+}
+
+function fillUniverse(symbols: string[], target: number): string[] {
+  const merged = [...new Set([...symbols, ...STATIC_UNIVERSE])];
+  return merged.slice(0, Math.max(target, 15));
 }
 
 async function fetchJson<T>(url: string): Promise<T | null> {
@@ -107,6 +118,11 @@ function deriveLiquidityQuality(contract: UWContractCandidate): LiquidityQuality
   return 'poor';
 }
 
+function hasRealDelta(contract: UWContractCandidate): boolean {
+  const d = Math.abs(contract.delta ?? 0);
+  return Number.isFinite(d) && d > 0;
+}
+
 // Pick the best single-leg contract for a long position:
 // nearest ATM with delta in target range, sorted by open interest / liquidity
 function selectLongContract(
@@ -126,9 +142,10 @@ function selectLongContract(
     const dte = expMs / (1000 * 60 * 60 * 24);
     if (dte < MIN_DTE || dte > MAX_DTE) return false;
 
-    // Delta filter — use absolute value; puts have negative delta
+    // Delta filter — only enforce when real greeks are available.
+    // UW screener often returns delta=0 unless greeks are hydrated.
     const absDelta = Math.abs(c.delta ?? 0);
-    if (absDelta < DELTA_MIN || absDelta > DELTA_MAX) return false;
+    if (absDelta > 0 && (absDelta < DELTA_MIN || absDelta > DELTA_MAX)) return false;
 
     // Must have a non-zero mid price
     if ((c.mid ?? 0) <= 0) return false;
@@ -138,8 +155,11 @@ function selectLongContract(
 
   if (candidates.length === 0) return null;
 
+  const withRealDelta = candidates.filter(hasRealDelta);
+  const pool = withRealDelta.length > 0 ? withRealDelta : candidates;
+
   // Sort: prefer high open interest + delta closest to 0.40 (sweet spot)
-  return candidates.sort((a, b) => {
+  return pool.sort((a, b) => {
     const aDeltaDist = Math.abs(Math.abs(a.delta ?? 0) - 0.40);
     const bDeltaDist = Math.abs(Math.abs(b.delta ?? 0) - 0.40);
     // Primary: delta proximity; secondary: open interest
@@ -152,52 +172,39 @@ function selectLongContract(
 // Simple directional score for long options based on flow bias + IV rank
 function scoreLongOption(params: {
   direction: OptionDirection;
-  flowData: UWOptionsFlowItem[];
-  netPremium: UWNetPremiumTick | null;
-  ivRank: number;
   contract: UWContractCandidate;
   spotPrice: number;
 }): number {
-  const { direction, flowData, netPremium, ivRank, contract, spotPrice } = params;
+  const { contract, spotPrice } = params;
   let score = 0;
 
-  // ── Flow bias (0-40 pts) ──────────────────────────────────────────────────
-  if (netPremium) {
-    const netBias = netPremium.callPremium - netPremium.putPremium;
-    if (direction === 'bullish' && netBias > 0) {
-      score += Math.min(40, 20 + (netBias / 50_000));
-    } else if (direction === 'bearish' && netBias < 0) {
-      score += Math.min(40, 20 + (Math.abs(netBias) / 50_000));
-    } else {
-      score += 5; // counter-flow — weak signal
-    }
+  // ── Delta quality (0-35 pts) ─────────────────────────────────────────────
+  const absDelta = Math.abs(contract.delta ?? 0);
+  if (absDelta > 0) {
+    if (absDelta >= 0.35 && absDelta <= 0.50) score += 35;
+    else if (absDelta >= 0.28 && absDelta <= 0.60) score += 22;
+    else score += 8;
   } else {
-    // Fallback: count unusual flow items
-    const unusual = flowData.filter(f =>
-      f.isUnusual &&
-      f.optionType === (direction === 'bullish' ? 'call' : 'put')
-    );
-    score += Math.min(30, unusual.length * 6);
+    score += 14; // neutral fallback when greeks are missing
   }
 
-  // ── IV rank fit (0-25 pts) ────────────────────────────────────────────────
-  // Long options benefit from LOW IV (cheap premium). Penalise high IV.
-  if (ivRank < 20) score += 25;
-  else if (ivRank < 35) score += 18;
-  else if (ivRank < 50) score += 10;
-  else score += 2; // IV too expensive for long options
-
-  // ── Liquidity (0-20 pts) ──────────────────────────────────────────────────
+  // ── Liquidity (0-40 pts) ──────────────────────────────────────────────────
   const liq = deriveLiquidityQuality(contract);
-  if (liq === 'excellent') score += 20;
-  else if (liq === 'good') score += 14;
-  else if (liq === 'fair') score += 6;
+  if (liq === 'excellent') score += 40;
+  else if (liq === 'good') score += 28;
+  else if (liq === 'fair') score += 14;
+  else score += 4;
 
-  // ── Delta quality (0-15 pts) ─────────────────────────────────────────────
-  const absDelta = Math.abs(contract.delta ?? 0);
-  // Sweet spot 0.35-0.50: highest leverage without heavy premium
-  if (absDelta >= 0.35 && absDelta <= 0.50) score += 15;
-  else if (absDelta >= 0.28 && absDelta <= 0.60) score += 8;
+  // ── Moneyness proximity (0-25 pts) ───────────────────────────────────────
+  if (spotPrice > 0) {
+    const distPct = Math.abs(contract.strike - spotPrice) / spotPrice;
+    if (distPct <= 0.01) score += 25;
+    else if (distPct <= 0.02) score += 18;
+    else if (distPct <= 0.04) score += 10;
+    else score += 4;
+  } else {
+    score += 8;
+  }
 
   return Math.min(100, Math.round(score));
 }
@@ -207,22 +214,27 @@ function scoreLongOption(params: {
 export async function GET(req: NextRequest) {
   try {
     const base = getBaseUrl(req);
+    const hasUwKey = Boolean(process.env.UNUSUAL_WHALES_API_KEY);
+    const dataMode: 'mock' | 'live_strict' = hasUwKey ? 'live_strict' : 'mock';
 
     // ── 1. Resolve symbol universe ─────────────────────────────────────────
     type UniverseResp = { symbols?: string[] };
-    const universeData = await fetchJson<UniverseResp>(`${base}/api/auto-stocks`);
-    const symbols: string[] = (universeData?.symbols?.length ? universeData.symbols : STATIC_UNIVERSE)
-      .slice(0, 15);
+    const universeData = await fetchJson<UniverseResp>(`${base}/api/unusual-whales/universe`);
+    const symbols: string[] = fillUniverse(universeData?.symbols ?? [], TARGET_SYMBOL_SCAN_COUNT);
 
     // ── 2. Fetch spot prices ───────────────────────────────────────────────
-    type QuotesResp = { quotes?: Record<string, { price?: number }> };
+    type QuoteRow = { symbol: string; price?: string | number };
     let spotPrices: Record<string, number> = {};
-    const quotesData = await fetchJson<QuotesResp>(
+    const quotesData = await fetchJson<QuoteRow[]>(
       `${base}/api/quotes?symbols=${symbols.join(',')}`
     );
-    if (quotesData?.quotes) {
-      for (const [sym, q] of Object.entries(quotesData.quotes)) {
-        if (q?.price) spotPrices[sym] = q.price;
+    if (Array.isArray(quotesData)) {
+      for (const row of quotesData) {
+        const sym = String(row?.symbol ?? '').toUpperCase();
+        const price = Number(row?.price);
+        if (sym && Number.isFinite(price) && price > 0) {
+          spotPrices[sym] = price;
+        }
       }
     }
     await sleep(CALL_DELAY_MS);
@@ -240,30 +252,14 @@ export async function GET(req: NextRequest) {
 
         const sym = encodeURIComponent(symbol.toUpperCase());
 
-        // Fetch all 4 data sources concurrently per symbol.
-        // The UW proxy routes now have built-in retry/backoff for 429s.
-        const [flowRes, netPremRes, volRes, contractsRes] = await Promise.allSettled([
-          fetchJson<UWOptionsFlowItem[]>(
-            `${base}/api/unusual-whales/flow?symbol=${sym}&allowMock=0`
-          ),
-          fetchJson<UWNetPremiumTick>(
-            `${base}/api/unusual-whales/net-premium?symbol=${sym}&allowMock=0`
-          ),
-          fetchJson<UWVolatilityData>(
-            `${base}/api/unusual-whales/iv?symbol=${sym}&allowMock=0`
-          ),
+        // Keep UW request pressure low for long-only mode: fetch only screener
+        // contracts per symbol (single UW endpoint instead of three).
+        const [contractsRes] = await Promise.allSettled([
           fetchJson<UWContractCandidate[]>(
             `${base}/api/unusual-whales/screener?symbol=${sym}&direction=both&allowMock=0&spotPrice=${spotPrice}`
           ),
         ]);
 
-        const flow = flowRes.status === 'fulfilled' && Array.isArray(flowRes.value)
-          ? (flowRes.value as UWOptionsFlowItem[])
-          : [];
-        const netPremium = netPremRes.status === 'fulfilled' ? netPremRes.value as UWNetPremiumTick | null : null;
-        const ivRank = volRes.status === 'fulfilled' && volRes.value
-          ? (volRes.value as UWVolatilityData).ivRank
-          : 50;
         const contracts = contractsRes.status === 'fulfilled' && Array.isArray(contractsRes.value)
           ? (contractsRes.value as UWContractCandidate[])
           : [];
@@ -280,14 +276,9 @@ export async function GET(req: NextRequest) {
 
           const score = scoreLongOption({
             direction,
-            flowData: flow,
-            netPremium,
-            ivRank,
             contract,
             spotPrice,
           });
-
-          if (score < MIN_SCORE) continue;
 
           const strategy: StrategyFamily = direction === 'bullish' ? 'long_call' : 'long_put';
           const premium = contract.mid;                   // cost per share
@@ -304,6 +295,9 @@ export async function GET(req: NextRequest) {
           const dte = Math.round(expMs / (1000 * 60 * 60 * 24));
           const dteBucket = deriveDteBucket(dte);
           const liquidityQuality = deriveLiquidityQuality(contract);
+          const ivRank = Number.isFinite(contract.impliedVolatility)
+            ? Math.max(0, Math.min(100, Math.round((contract.impliedVolatility || 0) * 100)))
+            : 50;
 
           const thesis = direction === 'bullish'
             ? `${symbol} long call at $${contract.strike} — delta ${contract.delta?.toFixed(2)} | IV rank ${ivRank}`
@@ -349,10 +343,8 @@ export async function GET(req: NextRequest) {
               : `${symbol} breaks above $${(spotPrice * 1.03).toFixed(0)} or premium loses 50%`,
             profitTarget: premium * 1.5,   // exit at 150% premium (50% gain)
             stopLoss: premium * 0.50,      // stop at 50% loss of premium
-            flowSummary: netPremium
-              ? `Net ${direction === 'bullish' ? 'call' : 'put'} premium: $${(direction === 'bullish' ? netPremium.callPremium : netPremium.putPremium).toLocaleString()}`
-              : `${flow.filter(f => f.isUnusual).length} unusual flow items`,
-            structureSummary: `Single-leg ${strategy.replace('_', ' ')} — ${dte}d to expiry`,
+            flowSummary: `${direction === 'bullish' ? 'call' : 'put'} contract-quality setup`,
+            structureSummary: `Single-leg ${strategy.replace('_', ' ')} — ${dte}d to expiry · spot ${spotPrice.toFixed(2)}`,
             ivRank,
             gexBias: 'neutral',
             liquidityQuality,
@@ -381,10 +373,11 @@ export async function GET(req: NextRequest) {
 
     // ── 4. Sort by score ────────────────────────────────────────────────────
     opportunities.sort((a, b) => b.score.finalScore - a.score.finalScore);
+    const topOpportunities = opportunities.slice(0, TOP_OUTPUT_COUNT);
 
     // ── 5. AI enrichment for top results ───────────────────────────────────
     let aiCallCount = 0;
-    for (const opp of opportunities) {
+    for (const opp of topOpportunities) {
       if (aiCallCount >= MAX_AI_CALLS) break;
       if (opp.score.finalScore < AI_ENRICH_THRESHOLD) break;
 
@@ -403,9 +396,11 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      opportunities,
-      count: opportunities.length,
+      opportunities: topOpportunities,
+      count: topOpportunities.length,
+      totalCandidates: opportunities.length,
       scannedSymbols: symbols.length,
+      dataMode,
       source: 'long-options-scanner',
     });
   } catch (err: any) {

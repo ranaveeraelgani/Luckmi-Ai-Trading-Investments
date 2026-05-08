@@ -27,7 +27,7 @@ export const DEFAULT_OPTION_PREFERENCES: Omit<OptionPreferences, 'user_id'> = {
   max_open_positions: 5,
   preferred_dte_min: 7,
   preferred_dte_max: 60,
-  min_score_threshold: 35,
+  min_score_threshold: 55,
   hard_loss_stop_pct: 50,
   profit_trail_activation_pct: 40,
   profit_trail_distance_pct: 25,
