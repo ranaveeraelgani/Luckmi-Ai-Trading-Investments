@@ -1,8 +1,34 @@
 import { createClient } from '@/app/lib/supabaseServer';
 import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
+import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { getOptionPreferences } from '@/app/lib/db/optionPreferences';
+import { getBrokerExecutionMode } from '@/app/lib/broker/getBrokerExecutionMode';
+import { checkBrokerAccountCanTrade } from '@/app/lib/broker/checkBrokerAccountCanTrade';
+import { executeOptionEntriesForUser } from '@/app/lib/options/executeOptionEntriesForUser';
 import { fetchOpenTradeIdsForUser, runOptionsTradeJob } from '@/app/lib/options/optionsCycleRunner';
 import { submitPendingOptionExits } from '@/app/lib/options/submitOptionBrokerExits';
 import { reconcileOptionBrokerFills } from '@/app/lib/options/reconcileOptionBrokerFills';
+import type { OptionsOpportunity } from '@/app/lib/options/types';
+
+const MANUAL_ENTRY_MIN_SCORE_FLOOR = 55;
+
+function getOrigin(req: Request): string {
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'localhost:3000';
+  const proto = req.headers.get('x-forwarded-proto') ?? 'http';
+  return `${proto}://${host}`;
+}
+
+async function fetchOpportunities(origin: string): Promise<OptionsOpportunity[]> {
+  const res = await fetch(`${origin}/api/options/opportunities`, {
+    headers: { 'x-internal-cron': 'true' },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) return [];
+
+  const data = await res.json().catch(() => ({}));
+  return Array.isArray(data?.opportunities) ? (data.opportunities as OptionsOpportunity[]) : [];
+}
 
 async function fetchAllTradeIdsForUser(userId: string): Promise<string[]> {
   const supabase = await createClient();
@@ -18,7 +44,7 @@ async function fetchAllTradeIdsForUser(userId: string): Promise<string[]> {
   return (data ?? []).map((row: any) => row.id as string);
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -41,6 +67,49 @@ export async function GET() {
       },
       { status: 403 },
     );
+  }
+
+  let entriesAttempted = 0;
+  let entriesPlaced = 0;
+  let entriesRejectedNonExecutable = 0;
+  let entrySkipReason: string | null = null;
+
+  try {
+    const brokerMode = await getBrokerExecutionMode(user.id);
+    if (!brokerMode.enabled) {
+      entrySkipReason = `broker: ${brokerMode.reason ?? 'disabled'}`;
+    } else {
+      const canTrade = await checkBrokerAccountCanTrade(user.id);
+      if (!canTrade.allowed) {
+        entrySkipReason = `account: ${canTrade.reason}`;
+      } else {
+        const prefs = await getOptionPreferences(user.id);
+        const opportunities = await fetchOpportunities(getOrigin(req));
+        if (opportunities.length === 0) {
+          entrySkipReason = 'no opportunities available';
+        } else {
+          const result = await executeOptionEntriesForUser({
+            userId: user.id,
+            opportunities,
+            policy: {
+              maxLossPerTrade: prefs.max_loss_per_trade ?? 300,
+              maxOpenPositions: prefs.max_open_positions ?? 5,
+              minScoreThreshold: prefs.min_score_threshold ?? 35,
+              maxEntriesPerRun: prefs.auto_entry_max_positions ?? 3,
+            },
+            minScoreFloor: MANUAL_ENTRY_MIN_SCORE_FLOOR,
+            aiSource: 'manual',
+          });
+
+          entriesAttempted = result.attempted;
+          entriesPlaced = result.placed;
+          entriesRejectedNonExecutable = result.nonExecutableRejected;
+          entrySkipReason = result.skippedReason ?? null;
+        }
+      }
+    }
+  } catch (entryErr: any) {
+    entrySkipReason = entryErr?.message ?? 'manual entry stage failed';
   }
 
   const openTradeIds = await fetchOpenTradeIdsForUser(user.id);
@@ -84,6 +153,10 @@ export async function GET() {
     peakUpdated,
     priceUnavailable,
     skipped,
+    entriesAttempted,
+    entriesPlaced,
+    entriesRejectedNonExecutable,
+    entrySkipReason,
     exits,
     fills,
   });

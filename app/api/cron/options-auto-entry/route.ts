@@ -36,30 +36,13 @@ import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getBrokerExecutionMode } from '@/app/lib/broker/getBrokerExecutionMode';
 import { checkBrokerAccountCanTrade } from '@/app/lib/broker/checkBrokerAccountCanTrade';
-import { getUserBrokerCredentials } from '@/app/lib/broker/getUserBrokerCredentials';
-import { getAlpacaOptionContractBySymbol } from '@/app/lib/broker/alpaca';
-import { placeOptionsBrokerEntry } from '@/app/lib/options/placeOptionsBrokerEntry';
+import { executeOptionEntriesForUser } from '@/app/lib/options/executeOptionEntriesForUser';
 import type { OptionsOpportunity } from '@/app/lib/options/types';
-
-// ── OCC symbol builder (same logic as UI buildOccSymbol) ─────────────────────
-function buildOccSymbol(underlying: string, expiry: string, optionType: 'call' | 'put', strike: number): string {
-  const d = expiry.replace(/-/g, '');
-  const ymd = d.length === 8 ? d.slice(2) : d;
-  const cp = optionType === 'call' ? 'C' : 'P';
-  const strikePadded = Math.round(strike * 1000).toString().padStart(8, '0');
-  return `${underlying.toUpperCase()}${ymd}${cp}${strikePadded}`;
-}
 
 export const maxDuration = 120;
 
 const MAX_USERS_PER_RUN = 50;
 const AUTO_ENTRY_MIN_SCORE_FLOOR = 55;
-
-type BrokerCredentials = {
-  apiKey: string;
-  apiSecret: string;
-  isPaper: boolean;
-};
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -70,26 +53,6 @@ function getOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-async function isOccContractExecutable(
-  credentials: BrokerCredentials,
-  occSymbol: string,
-  cache: Map<string, boolean>,
-): Promise<boolean> {
-  const key = `${credentials.isPaper ? 'paper' : 'live'}|${occSymbol}`;
-  const hit = cache.get(key);
-  if (typeof hit === 'boolean') return hit;
-
-  try {
-    const contract = await getAlpacaOptionContractBySymbol(credentials, occSymbol);
-    const status = String(contract?.status ?? '').toLowerCase();
-    const ok = status ? status === 'active' : true;
-    cache.set(key, ok);
-    return ok;
-  } catch {
-    cache.set(key, false);
-    return false;
-  }
-}
 
 /** Fetch opportunities from the scan cache endpoint.
  *  Uses require_cached=1 so the cron never blocks on a cold full scan (which
@@ -113,38 +76,6 @@ async function fetchOpportunities(origin: string): Promise<{ opportunities: Opti
   } catch {
     return { opportunities: [], dataMode: 'unknown', fromCache: false };
   }
-}
-
-/** Count how many option trades the user currently has open. */
-async function countOpenTrades(userId: string): Promise<number> {
-  const { count } = await supabaseAdmin
-    .from('option_paper_trades')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('status', 'open');
-  return count ?? 0;
-}
-
-/** Return set of underlying symbols the user already has open options trades on. */
-async function getOpenTradeSymbols(userId: string): Promise<Set<string>> {
-  const { data } = await supabaseAdmin
-    .from('option_paper_trades')
-    .select('symbol')
-    .eq('user_id', userId)
-    .eq('status', 'open');
-  return new Set((data ?? []).map((r: { symbol: string }) => r.symbol.toUpperCase()));
-}
-
-/** Get broker account options_buying_power from last synced row. */
-async function getOptionsBuyingPower(userId: string): Promise<number> {
-  const { data } = await supabaseAdmin
-    .from('broker_accounts')
-    .select('options_buying_power')
-    .eq('user_id', userId)
-    .order('last_synced_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return Number(data?.options_buying_power ?? 0);
 }
 
 // ── Route ─────────────────────────────────────────────────────────────────────
@@ -244,172 +175,31 @@ export async function POST(req: Request) {
         continue;
       }
 
-      // ── Pre-check 3: slot capacity ───────────────────────────────────────
-      const openCount = await countOpenTrades(userId);
-      const maxOpen: number = prefs.max_open_positions ?? 5;
-      const slotsAvailable = Math.max(0, maxOpen - openCount);
+      const result = await executeOptionEntriesForUser({
+        userId,
+        opportunities: allOpportunities,
+        policy: {
+          maxLossPerTrade: prefs.max_loss_per_trade ?? 300,
+          maxOpenPositions: prefs.max_open_positions ?? 5,
+          minScoreThreshold: prefs.min_score_threshold ?? 35,
+          maxEntriesPerRun: prefs.auto_entry_max_positions ?? 3,
+        },
+        minScoreFloor: AUTO_ENTRY_MIN_SCORE_FLOOR,
+        aiSource: 'auto_entry',
+      });
 
-      if (slotsAvailable === 0) {
-        totalSkippedUsers++;
-        userResults.push({ userId, placed: 0, skippedReason: 'no open slots' });
-        continue;
-      }
+      totalPlaced += result.placed;
+      totalEligibleCandidates += result.attempted;
+      totalExecutableCandidates += result.executableCandidates;
+      totalRejectedNonExecutable += result.nonExecutableRejected;
 
-      // ── Pre-check 4: buying power ─────────────────────────────────────────
-      const buyingPower = await getOptionsBuyingPower(userId);
-      const maxLoss: number = prefs.max_loss_per_trade ?? 300;
-      if (buyingPower > 0 && buyingPower < maxLoss) {
-        totalSkippedUsers++;
-        userResults.push({ userId, placed: 0, skippedReason: 'insufficient options buying power' });
-        continue;
-      }
-
-      // Load symbols already being held — prevent double-entering the same ticker
-      const openSymbols = await getOpenTradeSymbols(userId);
-
-      // ── Filter opportunities for this user ───────────────────────────────
-      const minScore: number = Math.max(prefs.min_score_threshold ?? 35, AUTO_ENTRY_MIN_SCORE_FLOOR);
-      const autoMax: number = Math.min(prefs.auto_entry_max_positions ?? 3, slotsAvailable);
-      const now = new Date();
-
-      const eligible = allOpportunities
-        .filter((o) => {
-          if (o.score.finalScore < minScore) return false;
-          if (o.netDebit * 100 > maxLoss) return false;
-          if (o.status !== 'active') return false;
-          // Skip stale opportunities
-          if (new Date(o.expiresAt) <= now) return false;
-          // Skip symbols the user already holds
-          if (openSymbols.has(o.symbol.toUpperCase())) return false;
-          // Only veto when AI says Avoid AND is confident enough (>=65).
-          // Below threshold treat as Watch so deterministic score decides.
-          if (o.aiAction === 'Avoid' && (o.aiConfidence ?? 100) >= 65) return false;
-          return true;
-        })
-        .sort((a, b) => b.score.finalScore - a.score.finalScore)
-        .slice(0, autoMax);
-
-      if (eligible.length === 0) {
-        userResults.push({
-          userId,
-          placed: 0,
-          skippedReason: 'no eligible opportunities met score/cost threshold',
-          eligibleCandidates: 0,
-          executableCandidates: 0,
-          nonExecutableRejected: 0,
-        });
-        continue;
-      }
-
-      totalEligibleCandidates += eligible.length;
-
-      let credentials: BrokerCredentials;
-      try {
-        credentials = await getUserBrokerCredentials(userId);
-      } catch {
-        totalSkippedUsers++;
-        userResults.push({ userId, placed: 0, skippedReason: 'broker credentials unavailable for executable contract check' });
-        continue;
-      }
-
-      const executableCache = new Map<string, boolean>();
-      const executableEligible: Array<{
-        opp: OptionsOpportunity;
-        longOccSymbol: string;
-        shortOccSymbol: string | null;
-      }> = [];
-      let nonExecutableRejected = 0;
-
-      for (const opp of eligible) {
-        const longOccSymbol = buildOccSymbol(opp.symbol, opp.longLeg.expiry, opp.longLeg.optionType, opp.longLeg.strike);
-        const shortOccSymbol = opp.shortLeg
-          ? buildOccSymbol(opp.symbol, opp.shortLeg.expiry, opp.shortLeg.optionType, opp.shortLeg.strike)
-          : null;
-
-        const longOk = await isOccContractExecutable(credentials, longOccSymbol, executableCache);
-        if (!longOk) {
-          nonExecutableRejected++;
-          continue;
-        }
-
-        if (shortOccSymbol) {
-          const shortOk = await isOccContractExecutable(credentials, shortOccSymbol, executableCache);
-          if (!shortOk) {
-            nonExecutableRejected++;
-            continue;
-          }
-        }
-
-        executableEligible.push({ opp, longOccSymbol, shortOccSymbol });
-      }
-
-      if (executableEligible.length === 0) {
-        totalRejectedNonExecutable += nonExecutableRejected;
-        userResults.push({
-          userId,
-          placed: 0,
-          skippedReason: 'no executable Alpaca contracts among eligible opportunities',
-          eligibleCandidates: eligible.length,
-          executableCandidates: 0,
-          nonExecutableRejected,
-        });
-        continue;
-      }
-
-      totalExecutableCandidates += executableEligible.length;
-      totalRejectedNonExecutable += nonExecutableRejected;
-
-      // ── Place trades ─────────────────────────────────────────────────────
-      let placed = 0;
-      // Track symbols entered this cycle to prevent same-ticker duplicates
-      const placedSymbolsThisCycle = new Set<string>();
-      for (const item of executableEligible) {
-        const opp = item.opp;
-        if (placedSymbolsThisCycle.has(opp.symbol.toUpperCase())) continue;
-        try {
-          const result = await placeOptionsBrokerEntry({
-            userId,
-            symbol: opp.symbol,
-            direction: opp.direction,
-            strategy: opp.strategy,
-            longOccSymbol: item.longOccSymbol,
-            shortOccSymbol: item.shortOccSymbol,
-            longStrike: opp.longLeg.strike,
-            longExpiry: opp.longLeg.expiry,
-            shortStrike: opp.shortLeg?.strike ?? null,
-            shortExpiry: opp.shortLeg?.expiry ?? null,
-            optionType: opp.longLeg.optionType,
-            netDebit: opp.netDebit,
-            maxGain: opp.maxGain,
-            maxLoss: opp.maxLoss,
-            entryScore: opp.score.finalScore,
-            entrySpotPrice: null,
-            qtyContracts: 1,
-            aiAction: opp.aiAction as 'Enter' | 'Watch' | 'Avoid' | undefined,
-            aiReason: opp.aiReason,
-            aiConfidence: opp.aiConfidence,
-            aiRiskFlags: opp.aiRiskFlags,
-            aiSource: 'auto_entry',
-          });
-
-          if (result.ok) {
-            placed++;
-            placedSymbolsThisCycle.add(opp.symbol.toUpperCase());
-          } else {
-            console.warn(`[options-auto-entry] user=${userId} opp=${opp.id} rejected: ${result.reason}`);
-          }
-        } catch (entryErr: any) {
-          console.error(`[options-auto-entry] user=${userId} opp=${opp.id} entry error:`, entryErr?.message);
-        }
-      }
-
-      totalPlaced += placed;
       userResults.push({
         userId,
-        placed,
-        eligibleCandidates: eligible.length,
-        executableCandidates: executableEligible.length,
-        nonExecutableRejected,
+        placed: result.placed,
+        skippedReason: result.skippedReason,
+        eligibleCandidates: result.attempted,
+        executableCandidates: result.executableCandidates,
+        nonExecutableRejected: result.nonExecutableRejected,
       });
     } catch (userErr: any) {
       console.error(`[options-auto-entry] unhandled error for user=${userId}:`, userErr?.message);

@@ -12,6 +12,7 @@ import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getUserBrokerCredentials } from '@/app/lib/broker/getUserBrokerCredentials';
 import { getAlpacaOrder } from '@/app/lib/broker/alpaca';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
+import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
     // Fetch net_debit from the trade to compute final P&L
     const { data: trade } = await supabaseAdmin
       .from('option_paper_trades')
-      .select('net_debit, auto_exit_reason, user_id, symbol')
+      .select('net_debit, auto_exit_reason, user_id, symbol, strategy, direction, execution_mode_snapshot, created_at')
       .eq('id', row.trade_id)
       .maybeSingle();
 
@@ -155,6 +156,20 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
       exitPrice,
       pnl,
       exitReason,
+    });
+
+    await insertOptionExitEvent({
+      tradeId:       row.trade_id,
+      userId:        trade.user_id,
+      symbol:        trade.symbol,
+      strategy:      trade.strategy ?? null,
+      direction:     trade.direction ?? null,
+      rawExitReason: exitReason,
+      exitAt:        new Date().toISOString(),
+      entryAt:       trade.created_at ?? null,
+      netDebit:      Number(trade.net_debit),
+      pnl,
+      executionMode: trade.execution_mode_snapshot ?? null,
     });
 
     const pnlLabel = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;

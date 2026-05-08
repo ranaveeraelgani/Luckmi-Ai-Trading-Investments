@@ -31,6 +31,20 @@ type Trade = {
   created_at?: string;
 };
 
+type OptionTrade = {
+  id: string;
+  symbol: string;
+  status: string;
+  strategy?: string | null;
+  entry_at?: string | null;
+  exit_at?: string | null;
+  pnl?: number | null;
+  current_pnl?: number | null;
+  current_value?: number | null;
+  entry_score?: number | null;
+  notes?: string | null;
+};
+
 type Position = {
   id: string;
   symbol: string;
@@ -258,6 +272,7 @@ function ReportTabHowTo({
 export default function ReportsPage() {
   const [aiDecisions, setAiDecisions] = useState<AiDecision[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [optionTrades, setOptionTrades] = useState<OptionTrade[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -298,9 +313,10 @@ export default function ReportsPage() {
     try {
       setLoading(true);
 
-      const [aiRes, tradesRes, portfolioRes, subscriptionRes] = await Promise.allSettled([
+      const [aiRes, tradesRes, optionTradesRes, portfolioRes, subscriptionRes] = await Promise.allSettled([
         fetch("/api/ai-decisions?limit=500", { cache: "no-store" }),
         fetch("/api/trades?limit=500", { cache: "no-store" }),
+        fetch("/api/options/paper-trade", { cache: "no-store" }),
         fetch("/api/portfolio/auto", { cache: "no-store" }),
         fetch("/api/subscription/me", { cache: "no-store" }),
       ]);
@@ -313,6 +329,11 @@ export default function ReportsPage() {
       if (tradesRes.status === "fulfilled" && tradesRes.value.ok) {
         const data = await tradesRes.value.json();
         setTrades(Array.isArray(data) ? data : data?.trades || []);
+      }
+
+      if (optionTradesRes.status === "fulfilled" && optionTradesRes.value.ok) {
+        const data = await optionTradesRes.value.json();
+        setOptionTrades(Array.isArray(data) ? data : data?.trades || []);
       }
 
       if (portfolioRes.status === "fulfilled" && portfolioRes.value.ok) {
@@ -417,6 +438,18 @@ export default function ReportsPage() {
     });
   }, [range, trades]);
 
+  const filteredOptionTrades = useMemo(() => {
+    if (range === "all") return optionTrades;
+    const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return optionTrades.filter((t) => {
+      const status = String(t.status || "").toLowerCase();
+      const when = status === "closed" ? t.exit_at || t.entry_at : t.entry_at || t.exit_at;
+      const ts = new Date(String(when || "")).getTime();
+      return Number.isFinite(ts) && ts >= cutoff;
+    });
+  }, [optionTrades, range]);
+
   const metrics = useMemo(() => {
     const totalDecisions = filteredDecisions.length;
     const buys = filteredDecisions.filter((d) => d.action?.toLowerCase().includes("buy")).length;
@@ -439,19 +472,39 @@ export default function ReportsPage() {
 
     const sellTrades = filteredTrades.filter((t) => t.type?.toLowerCase().includes("sell"));
     const buyTrades = filteredTrades.filter((t) => t.type?.toLowerCase().includes("buy"));
-    const realizedPnL = sellTrades.reduce((sum, t) => sum + toNumber(t.pnl), 0);
-    const wins = sellTrades.filter((t) => toNumber(t.pnl) > 0).length;
-    const losses = sellTrades.filter((t) => toNumber(t.pnl) < 0).length;
-    const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
+    const optionClosedTrades = filteredOptionTrades.filter(
+      (t) => String(t.status || "").toLowerCase() === "closed"
+    );
+    const optionOpenTrades = filteredOptionTrades.filter(
+      (t) => String(t.status || "").toLowerCase() === "open"
+    );
 
-    const bestTrade = sellTrades.reduce<Trade | null>((best, trade) => {
+    const stockRealizedPnL = sellTrades.reduce((sum, t) => sum + toNumber(t.pnl), 0);
+    const optionsRealizedPnL = optionClosedTrades.reduce((sum, t) => sum + toNumber(t.pnl), 0);
+    const realizedPnL = stockRealizedPnL + optionsRealizedPnL;
+
+    const wins =
+      sellTrades.filter((t) => toNumber(t.pnl) > 0).length +
+      optionClosedTrades.filter((t) => toNumber(t.pnl) > 0).length;
+    const losses =
+      sellTrades.filter((t) => toNumber(t.pnl) < 0).length +
+      optionClosedTrades.filter((t) => toNumber(t.pnl) < 0).length;
+    const totalClosedTrades = sellTrades.length + optionClosedTrades.length;
+    const winRate = totalClosedTrades > 0 ? (wins / totalClosedTrades) * 100 : 0;
+
+    const closedPerformanceRows = [
+      ...sellTrades.map((t) => ({ symbol: t.symbol, pnl: toNumber(t.pnl) })),
+      ...optionClosedTrades.map((t) => ({ symbol: t.symbol, pnl: toNumber(t.pnl) })),
+    ];
+
+    const bestTrade = closedPerformanceRows.reduce<{ symbol: string; pnl: number } | null>((best, trade) => {
       if (!best) return trade;
-      return toNumber(trade.pnl) > toNumber(best.pnl) ? trade : best;
+      return trade.pnl > best.pnl ? trade : best;
     }, null);
 
-    const worstTrade = sellTrades.reduce<Trade | null>((worst, trade) => {
+    const worstTrade = closedPerformanceRows.reduce<{ symbol: string; pnl: number } | null>((worst, trade) => {
       if (!worst) return trade;
-      return toNumber(trade.pnl) < toNumber(worst.pnl) ? trade : worst;
+      return trade.pnl < worst.pnl ? trade : worst;
     }, null);
 
     const symbolCounts = filteredDecisions.reduce<Record<string, number>>((acc, d) => {
@@ -492,9 +545,23 @@ export default function ReportsPage() {
       .sort((a, b) => b.realized - a.realized)
       .slice(0, 8);
 
-    const openUnrealized = positions.reduce((sum, p) => sum + toNumber(p.pnl), 0);
-    const openWinners = positions.filter((p) => toNumber(p.pnl) > 0).length;
-    const openLosers = positions.filter((p) => toNumber(p.pnl) < 0).length;
+    const stockOpenUnrealized = positions.reduce((sum, p) => sum + toNumber(p.pnl), 0);
+    const optionsOpenUnrealized = optionOpenTrades.reduce((sum, t) => sum + toNumber(t.current_pnl), 0);
+    const openUnrealized = stockOpenUnrealized + optionsOpenUnrealized;
+
+    const openWinners =
+      positions.filter((p) => toNumber(p.pnl) > 0).length +
+      optionOpenTrades.filter((t) => toNumber(t.current_pnl) > 0).length;
+    const openLosers =
+      positions.filter((p) => toNumber(p.pnl) < 0).length +
+      optionOpenTrades.filter((t) => toNumber(t.current_pnl) < 0).length;
+
+    const optionTrailStopExits = optionClosedTrades.filter((t) =>
+      String(t.notes || "").toLowerCase().includes("trail-stop-from-peak")
+    ).length;
+    const optionHardStopExits = optionClosedTrades.filter((t) =>
+      String(t.notes || "").toLowerCase().includes("hard-loss-stop")
+    ).length;
 
     const highConfidenceSellCount = sellTrades.filter((t) => toNumber(t.confidence) >= 70).length;
     const highConfidenceSellWinRate =
@@ -516,7 +583,7 @@ export default function ReportsPage() {
       avgConfidence,
       avgCts,
       realizedPnL,
-      sellTradesCount: sellTrades.length,
+      sellTradesCount: totalClosedTrades,
       wins,
       losses,
       winRate,
@@ -527,11 +594,20 @@ export default function ReportsPage() {
       openUnrealized,
       openWinners,
       openLosers,
-      openPositionsCount: positions.length,
+      openPositionsCount: positions.length + optionOpenTrades.length,
       highConfidenceSellWinRate,
       strictFilterPnL,
+      stockRealizedPnL,
+      optionsRealizedPnL,
+      optionClosedTradesCount: optionClosedTrades.length,
+      optionOpenTradesCount: optionOpenTrades.length,
+      optionTrailStopExits,
+      optionHardStopExits,
+      optionsOpenUnrealized,
+      stockOpenUnrealized,
+      totalClosedTrades,
     };
-  }, [filteredDecisions, filteredTrades, positions]);
+  }, [filteredDecisions, filteredTrades, filteredOptionTrades, positions]);
 
   const aiNarrative = useMemo(() => {
     if (metrics.totalDecisions === 0) {
@@ -582,6 +658,10 @@ export default function ReportsPage() {
     return actions.slice(0, 3);
   }, [metrics]);
 
+  const openOptionExposure = useMemo(() => {
+    return optionTrades.filter((t) => String(t.status || "").toLowerCase() === "open");
+  }, [optionTrades]);
+
   const diversification = useMemo(() => {
     const bySymbol = new Map<string, number>();
 
@@ -593,6 +673,14 @@ export default function ReportsPage() {
       const fallbackWeight = Math.max(1, Math.abs(toNumber(p.pnl)));
       const weight = marketValue > 0 ? marketValue : fallbackWeight;
 
+      bySymbol.set(symbol, toNumber(bySymbol.get(symbol)) + weight);
+    }
+
+    for (const t of openOptionExposure) {
+      const symbol = String(t.symbol || "").toUpperCase();
+      if (!symbol) continue;
+
+      const weight = Math.max(1, Math.abs(toNumber(t.current_pnl, toNumber(t.pnl))));
       bySymbol.set(symbol, toNumber(bySymbol.get(symbol)) + weight);
     }
 
@@ -660,7 +748,7 @@ export default function ReportsPage() {
       topPercent,
       message,
     };
-  }, [positions]);
+  }, [positions, openOptionExposure]);
 
   const tabConfig: Array<{ key: ReportTab; label: string; free: boolean }> = [
     { key: "overview", label: "Overview", free: true },
@@ -785,7 +873,7 @@ export default function ReportsPage() {
                 <StatCard
                   label="Realized P&L"
                   value={formatMoney(metrics.realizedPnL)}
-                  subtext={`${metrics.sellTradesCount} closed sell trades`}
+                  subtext={`${metrics.totalClosedTrades} closed trades · Options ${formatMoney(metrics.optionsRealizedPnL)}`}
                   tone={metrics.realizedPnL >= 0 ? "green" : "red"}
                   hint="Profit or loss from closed trades only."
                 />
@@ -795,7 +883,7 @@ export default function ReportsPage() {
                 <StatCard
                   label="Open Risk"
                   value={formatMoney(metrics.openUnrealized)}
-                  subtext={`${metrics.openPositionsCount} open positions now`}
+                  subtext={`${metrics.openPositionsCount} open positions · Options ${formatMoney(metrics.optionsOpenUnrealized)}`}
                   tone={metrics.openUnrealized >= 0 ? "green" : "red"}
                   hint="Unrealized P&L across open positions."
                 />
@@ -812,6 +900,13 @@ export default function ReportsPage() {
                   subtext="Recorded entries in selected range"
                   tone="blue"
                   hint="Number of entry trades placed."
+                />
+                <StatCard
+                  label="Option Exits"
+                  value={metrics.optionClosedTradesCount}
+                  subtext={`${metrics.optionTrailStopExits} trail stops · ${metrics.optionHardStopExits} hard stops`}
+                  tone="amber"
+                  hint="Closed options in range, including automated risk exits."
                 />
                 <StatCard
                   label="High-Conf Sell Win Rate"

@@ -16,10 +16,12 @@ export async function loadAdminSystemReviewData() {
   const [
     profilesRes,
     tradesRes,
+    optionTradesRes,
     decisionsRes,
     runsRes,
     positionsRes,
     brokerOrdersRes,
+    optionTradeOrdersRes,
     subscriptionsRes,
   ] = await Promise.all([
     supabaseAdmin
@@ -31,6 +33,11 @@ export async function loadAdminSystemReviewData() {
       .from("trades")
       .select("user_id, symbol, type, pnl, confidence, cts_score, created_at")
       .order("created_at", { ascending: false })
+      .limit(10000),
+    supabaseAdmin
+      .from("option_paper_trades")
+      .select("user_id, symbol, status, pnl, entry_score, entry_at, exit_at, notes, auto_exit_reason")
+      .order("entry_at", { ascending: false })
       .limit(10000),
     supabaseAdmin
       .from("ai_decisions")
@@ -52,6 +59,11 @@ export async function loadAdminSystemReviewData() {
       .order("created_at", { ascending: false })
       .limit(5000),
     supabaseAdmin
+      .from("option_trade_orders")
+      .select("trade_id, status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(10000),
+    supabaseAdmin
       .from("subscriptions")
       .select("user_id, plan_code, status")
       .limit(5000),
@@ -60,10 +72,12 @@ export async function loadAdminSystemReviewData() {
   const loadError =
     profilesRes.error ||
     tradesRes.error ||
+    optionTradesRes.error ||
     decisionsRes.error ||
     runsRes.error ||
     positionsRes.error ||
     brokerOrdersRes.error ||
+    optionTradeOrdersRes.error ||
     subscriptionsRes.error;
 
   if (loadError) {
@@ -73,10 +87,12 @@ export async function loadAdminSystemReviewData() {
   return {
     profiles: profilesRes.data || [],
     trades: tradesRes.data || [],
+    optionTrades: optionTradesRes.data || [],
     decisions: decisionsRes.data || [],
     runs: runsRes.data || [],
     positions: positionsRes.data || [],
     brokerOrders: brokerOrdersRes.data || [],
+    optionTradeOrders: optionTradeOrdersRes.data || [],
     subscriptions: subscriptionsRes.data || [],
   };
 }
@@ -104,9 +120,11 @@ export async function loadAdminOverviewData(rangeRaw: string) {
       subscriptions: [],
       positions: [],
       trades: [],
+      optionTrades: [],
       decisions: [],
       runs: [],
       brokerOrders: [],
+      optionTradeOrders: [],
     };
   }
 
@@ -138,14 +156,28 @@ export async function loadAdminOverviewData(rangeRaw: string) {
     .order("created_at", { ascending: false })
     .limit(range === "all" ? 50000 : 20000);
 
+  const optionTradesQuery = supabaseAdmin
+    .from("option_paper_trades")
+    .select("user_id, symbol, status, pnl, entry_score, entry_at, exit_at, notes, auto_exit_reason")
+    .in("user_id", userIds)
+    .order("entry_at", { ascending: false })
+    .limit(range === "all" ? 50000 : 20000);
+
+  const optionTradeOrdersQuery = supabaseAdmin
+    .from("option_trade_orders")
+    .select("trade_id, status, created_at")
+    .order("created_at", { ascending: false })
+    .limit(range === "all" ? 50000 : 20000);
+
   if (cutoffIso) {
     tradesQuery.gte("created_at", cutoffIso);
     decisionsQuery.gte("created_at", cutoffIso);
     runsQuery.gte("created_at", cutoffIso);
     brokerOrdersQuery.gte("created_at", cutoffIso);
+    optionTradeOrdersQuery.gte("created_at", cutoffIso);
   }
 
-  const [subscriptionsRes, positionsRes, tradesRes, decisionsRes, runsRes, brokerOrdersRes] =
+  const [subscriptionsRes, positionsRes, tradesRes, optionTradesRes, decisionsRes, runsRes, brokerOrdersRes, optionTradeOrdersRes] =
     await Promise.all([
       supabaseAdmin
         .from("subscriptions")
@@ -156,18 +188,35 @@ export async function loadAdminOverviewData(rangeRaw: string) {
         .select("user_id, symbol, status, pnl")
         .in("user_id", userIds),
       tradesQuery,
+      optionTradesQuery,
       decisionsQuery,
       runsQuery,
       brokerOrdersQuery,
+      optionTradeOrdersQuery,
     ]);
+
+  const optionTradesRaw = optionTradesRes.data || [];
+  const optionTrades = !cutoffIso
+    ? optionTradesRaw
+    : optionTradesRaw.filter((row: any) => {
+        const status = String(row?.status || "").toLowerCase();
+        if (status === "open") return true;
+
+        const entryTs = new Date(String(row?.entry_at || "")).getTime();
+        const exitTs = new Date(String(row?.exit_at || "")).getTime();
+        const cutoffTs = new Date(cutoffIso).getTime();
+        return (Number.isFinite(entryTs) && entryTs >= cutoffTs) || (Number.isFinite(exitTs) && exitTs >= cutoffTs);
+      });
 
   const loadError =
     subscriptionsRes.error ||
     positionsRes.error ||
     tradesRes.error ||
+    optionTradesRes.error ||
     decisionsRes.error ||
     runsRes.error ||
-    brokerOrdersRes.error;
+    brokerOrdersRes.error ||
+    optionTradeOrdersRes.error;
 
   if (loadError) {
     throw new Error(loadError.message || "Failed to load report data");
@@ -180,8 +229,10 @@ export async function loadAdminOverviewData(rangeRaw: string) {
     subscriptions: subscriptionsRes.data || [],
     positions: positionsRes.data || [],
     trades: tradesRes.data || [],
+    optionTrades,
     decisions: decisionsRes.data || [],
     runs: runsRes.data || [],
     brokerOrders: brokerOrdersRes.data || [],
+    optionTradeOrders: optionTradeOrdersRes.data || [],
   };
 }

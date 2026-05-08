@@ -15,6 +15,7 @@ import { parseOptionContractSymbol } from '@/app/lib/broker/alpaca';
 import { getOptionPreferences } from '@/app/lib/db/optionPreferences';
 import { DEFAULT_OPTION_PREFERENCES } from '@/app/lib/db/optionPreferences';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
+import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -232,10 +233,24 @@ export async function placeOptionsBrokerEntry(
     });
   } catch (err: any) {
     // Mark trade failed so it doesn't show as live
+    const failedAt = new Date().toISOString();
     await supabaseAdmin
       .from('option_paper_trades')
       .update({ broker_status: 'entry_failed', status: 'closed', auto_exit_reason: 'entry_order_failed' })
       .eq('id', tradeId);
+    await insertOptionExitEvent({
+      tradeId,
+      userId,
+      symbol: symbol.toUpperCase(),
+      strategy,
+      direction,
+      rawExitReason: 'entry_order_failed',
+      exitAt: failedAt,
+      entryAt: failedAt,
+      netDebit,
+      pnl: -(netDebit * 100),  // full debit lost on entry failure
+      executionMode,
+    });
     return { ok: false, reason: err?.message ?? 'Alpaca order submission failed.' };
   }
 

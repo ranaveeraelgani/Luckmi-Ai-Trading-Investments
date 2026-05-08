@@ -24,15 +24,25 @@ export type SystemReviewResponse = {
 export function buildSystemReviewStats(
   profiles: any[],
   trades: any[],
+  optionTrades: any[],
   decisions: any[],
   runs: any[],
   positions: any[],
   brokerOrders: any[],
+  optionTradeOrders: any[],
   subscriptions: any[]
 ) {
   const totalUsers = profiles.length;
 
-  const ctsBuckets = computeCtsBuckets(trades);
+  const optionTradesForCts = optionTrades.map((t: any) => ({
+    symbol: t.symbol,
+    type: String(t.status || "").toLowerCase() === "closed" ? "option_sell" : "option_buy",
+    pnl: t.pnl,
+    cts_score: t.entry_score,
+    created_at: t.exit_at || t.entry_at,
+  }));
+  const mergedTrades = [...trades, ...optionTradesForCts];
+  const ctsBuckets = computeCtsBuckets(mergedTrades);
 
   const symbolTradeCounts = new Map<string, number>();
   const symbolPnl = new Map<string, number>();
@@ -68,6 +78,27 @@ export function buildSystemReviewStats(
     if (trade.user_id) activeUserIds.add(trade.user_id);
   }
 
+  for (const trade of optionTrades) {
+    const symbol = String(trade?.symbol || "").toUpperCase();
+    const pnl = toNumber(trade?.pnl);
+    const status = String(trade?.status || "").toLowerCase();
+
+    if (symbol) {
+      symbolTradeCounts.set(symbol, toNumber(symbolTradeCounts.get(symbol)) + 1);
+    }
+
+    if (status === "closed") {
+      totalRealizedPnl += pnl;
+      if (pnl > 0) platformWins += 1;
+      if (pnl < 0) platformLosses += 1;
+      if (symbol) {
+        symbolPnl.set(symbol, toNumber(symbolPnl.get(symbol)) + pnl);
+      }
+    }
+
+    if (trade?.user_id) activeUserIds.add(trade.user_id);
+  }
+
   for (const d of decisions) {
     if (d.user_id) activeUserIds.add(d.user_id);
     const conf = toNumber(d.confidence);
@@ -95,11 +126,18 @@ export function buildSystemReviewStats(
   }
 
   // Broker orders
-  let ordersTotal = brokerOrders.length;
+  let ordersTotal = brokerOrders.length + optionTradeOrders.length;
   let ordersFilled = 0;
   let ordersRejected = 0;
   let ordersCancelled = 0;
   for (const order of brokerOrders) {
+    const s = String(order.status || "").toLowerCase();
+    if (s === "filled") ordersFilled += 1;
+    else if (s === "rejected") ordersRejected += 1;
+    else if (s === "cancelled" || s === "canceled") ordersCancelled += 1;
+  }
+
+  for (const order of optionTradeOrders) {
     const s = String(order.status || "").toLowerCase();
     if (s === "filled") ordersFilled += 1;
     else if (s === "rejected") ordersRejected += 1;
@@ -115,6 +153,14 @@ export function buildSystemReviewStats(
       openPositionsCount += 1;
       totalUnrealizedPnl += toNumber(p.pnl);
       if (p.user_id) usersWithPositions.add(p.user_id);
+    }
+  }
+
+  for (const t of optionTrades) {
+    if (String(t?.status || "").toLowerCase() === "open") {
+      openPositionsCount += 1;
+      totalUnrealizedPnl += toNumber(t?.pnl);
+      if (t?.user_id) usersWithPositions.add(t.user_id);
     }
   }
 
@@ -153,7 +199,7 @@ export function buildSystemReviewStats(
     totalUsers,
     usersWithActivity: activeUserIds.size,
     usersWithPositions: usersWithPositions.size,
-    totalTrades: trades.length,
+    totalTrades: mergedTrades.length,
     totalRealizedPnl,
     totalUnrealizedPnl,
     winRate: totalClosed > 0 ? (platformWins / totalClosed) * 100 : 0,

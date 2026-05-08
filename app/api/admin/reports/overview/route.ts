@@ -23,9 +23,11 @@ export async function GET(req: Request) {
       subscriptions,
       positions,
       trades,
+      optionTrades,
       decisions,
       runs,
       brokerOrders,
+      optionTradeOrders,
     } = await loadAdminOverviewData(rangeInput);
 
     if (userIds.length === 0) {
@@ -39,9 +41,11 @@ export async function GET(req: Request) {
         subscriptions,
         positions,
         trades,
+        optionTrades,
         decisions,
         runs,
         brokerOrders,
+        optionTradeOrders,
       })
     );
   } catch (error: any) {

@@ -16,20 +16,24 @@ export async function POST(_req: NextRequest) {
     const {
       profiles,
       trades,
+      optionTrades,
       decisions,
       runs,
       positions,
       brokerOrders,
+      optionTradeOrders,
       subscriptions,
     } = await loadAdminSystemReviewData();
 
     const summaryStats = buildSystemReviewStats(
       profiles,
       trades,
+      optionTrades,
       decisions,
       runs,
       positions,
       brokerOrders,
+      optionTradeOrders,
       subscriptions
     );
 
@@ -45,9 +49,11 @@ export async function POST(_req: NextRequest) {
         sampleSizes: {
           totalUsers: summaryStats.totalUsers,
           trades: trades.length,
+          optionTrades: optionTrades.length,
           aiDecisions: decisions.length,
           engineRuns: runs.length,
           brokerOrders: brokerOrders.length,
+          optionTradeOrders: optionTradeOrders.length,
         },
       },
       ctsBuckets: summaryStats.ctsBuckets,

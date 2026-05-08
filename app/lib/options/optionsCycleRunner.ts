@@ -25,6 +25,7 @@
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
 import { requestOptionBrokerClose } from '@/app/lib/options/requestOptionBrokerClose';
+import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ interface OpenTrade {
   symbol: string;
   strategy: string;
   option_type: string | null;
+  direction: string | null;
   long_strike: number | null;
   long_expiry: string | null;
   short_strike: number | null;
@@ -58,6 +60,7 @@ interface OpenTrade {
   broker_status: string | null;
   entry_broker_order_id: string | null;
   exit_broker_order_id: string | null;
+  created_at: string | null;
 }
 
 interface UserPrefs {
@@ -176,10 +179,10 @@ async function fetchTradeById(tradeId: string): Promise<OpenTrade | null> {
   const { data, error } = await supabaseAdmin
     .from('option_paper_trades')
     .select(
-      'id, user_id, symbol, strategy, option_type, ' +
+      'id, user_id, symbol, strategy, option_type, direction, ' +
       'long_strike, long_expiry, short_strike, short_expiry, ' +
       'net_debit, max_gain, max_loss, peak_pnl, qty_contracts, execution_mode_snapshot, ' +
-      'broker_status, entry_broker_order_id, exit_broker_order_id',
+      'broker_status, entry_broker_order_id, exit_broker_order_id, created_at',
     )
     .eq('id', tradeId)
     .eq('status', 'open')
@@ -210,11 +213,12 @@ async function closeTrade(
   exitReason: string,
 ): Promise<void> {
   const pnl = (currentValue - trade.net_debit) * 100;
+  const exitAt = new Date().toISOString();
   const { error } = await supabaseAdmin
     .from('option_paper_trades')
     .update({
       status: 'closed',
-      exit_at: new Date().toISOString(),
+      exit_at: exitAt,
       exit_price: currentValue,
       pnl,
       auto_exit_reason: exitReason,
@@ -222,6 +226,20 @@ async function closeTrade(
     .eq('id', trade.id);
 
   if (error) throw new Error(`closeTrade(${trade.id}): ${error.message}`);
+
+  await insertOptionExitEvent({
+    tradeId:       trade.id,
+    userId:        trade.user_id,
+    symbol:        trade.symbol,
+    strategy:      trade.strategy,
+    direction:     trade.direction,
+    rawExitReason: exitReason,
+    exitAt,
+    entryAt:       trade.created_at ?? null,
+    netDebit:      trade.net_debit,
+    pnl,
+    executionMode: trade.execution_mode_snapshot,
+  });
 }
 
 async function savePeakPnl(tradeId: string, peakPnl: number): Promise<void> {

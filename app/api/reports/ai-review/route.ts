@@ -22,6 +22,7 @@ export async function POST(_req: NextRequest) {
 
     const [
       tradesRes,
+      optionTradesRes,
       decisionsRes,
       brokerOrdersRes,
       positionsRes,
@@ -32,6 +33,12 @@ export async function POST(_req: NextRequest) {
         .select("symbol, type, pnl, confidence, cts_score, created_at")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("option_paper_trades")
+        .select("symbol, status, pnl, entry_score, entry_at, exit_at, notes")
+        .eq("user_id", user.id)
+        .order("entry_at", { ascending: false })
         .limit(100),
       supabase
         .from("ai_decisions")
@@ -63,6 +70,7 @@ export async function POST(_req: NextRequest) {
 
     if (
       tradesRes.error ||
+      optionTradesRes.error ||
       decisionsRes.error ||
       brokerOrdersRes.error ||
       positionsRes.error ||
@@ -72,6 +80,7 @@ export async function POST(_req: NextRequest) {
         {
           error:
             tradesRes.error?.message ||
+            optionTradesRes.error?.message ||
             decisionsRes.error?.message ||
             brokerOrdersRes.error?.message ||
             positionsRes.error?.message ||
@@ -82,11 +91,35 @@ export async function POST(_req: NextRequest) {
       );
     }
 
+    const optionTrades = optionTradesRes.data || [];
+    const optionTradesAsGeneralTrades = optionTrades.map((t: any) => ({
+      symbol: t.symbol,
+      type: String(t.status || '').toLowerCase() === 'closed' ? 'option_sell' : 'option_buy',
+      pnl: t.pnl,
+      confidence: null,
+      cts_score: t.entry_score,
+      created_at: t.exit_at || t.entry_at,
+    }));
+
+    const mergedPositions = [
+      ...(positionsRes.data || []),
+      ...optionTrades
+        .filter((t: any) => String(t.status || '').toLowerCase() === 'open')
+        .map((t: any) => ({
+          symbol: t.symbol,
+          status: 'in-position',
+          pnl: t.pnl,
+          peak_pnl_percent: null,
+          shares: 1,
+          entry_price: null,
+        })),
+    ];
+
     const summaryStats = buildUserReviewSummary(
-      tradesRes.data || [],
+      [...(tradesRes.data || []), ...optionTradesAsGeneralTrades],
       decisionsRes.data || [],
       brokerOrdersRes.data || [],
-      positionsRes.data || [],
+      mergedPositions,
       brokerPositionsRes.data || []
     );
 
@@ -101,6 +134,7 @@ export async function POST(_req: NextRequest) {
         generatedAt: new Date().toISOString(),
         sampleSizes: {
           trades: tradesRes.data?.length ?? 0,
+          optionTrades: optionTrades.length,
           aiDecisions: decisionsRes.data?.length ?? 0,
           brokerOrders: brokerOrdersRes.data?.length ?? 0,
           positions: positionsRes.data?.length ?? 0,

@@ -12,8 +12,11 @@ type UserRow = {
   email: string | null;
   plan_code: string | null;
   open_positions: number;
+  stock_open_positions?: number;
+  options_open_positions?: number;
   unrealized_pnl: number;
   realized_pnl: number;
+  options_realized_pnl?: number;
   net_pnl: number;
   ai_decisions_total: number;
   ai_buy: number;
@@ -42,8 +45,13 @@ type OverviewPayload = {
     users_in_profit: number;
     users_in_loss: number;
     total_open_positions: number;
+    stock_open_positions: number;
+    options_open_positions: number;
     total_unrealized_pnl: number;
     total_realized_pnl: number;
+    stock_realized_pnl: number;
+    options_realized_pnl: number;
+    options_closed_trades: number;
     total_ai_decisions: number;
     buy_decisions: number;
     hold_decisions: number;
@@ -60,6 +68,23 @@ type OverviewPayload = {
     low_confidence_sell_decisions: number;
     decisions_last_7d: number;
     hold_to_sell_ratio: number | null;
+    option_exit_reasons?: {
+      trail_stop_from_peak: number;
+      hard_loss_stop: number;
+      manual: number;
+      expiry: number;
+      other: number;
+    };
+    option_exit_audit_rows?: Array<{
+      user_id: string;
+      user_name: string | null;
+      user_email: string | null;
+      symbol: string;
+      reason: "trail-stop-from-peak" | "hard-loss-stop" | "manual" | "expiry" | "other";
+      exits: number;
+      total_pnl: number;
+      last_exit_at: string | null;
+    }>;
     top_plans_by_users?: Array<{ plan_code: string; users_count: number }>;
     users_by_position_bucket?: {
       no_positions: number;
@@ -693,9 +718,16 @@ export default function AdminReportsPage() {
                     <KpiCard
                       label="Realized P&L"
                       value={formatMoney(data.summary.total_realized_pnl)}
-                      sub="All closed sell trades"
+                      sub={`Stock ${formatMoney(data.summary.stock_realized_pnl)} · Options ${formatMoney(data.summary.options_realized_pnl)}`}
                       tone={valueTone(toNumber(data.summary.total_realized_pnl))}
                       hint="Total confirmed closed-trade P&L across all users."
+                    />
+                    <KpiCard
+                      label="Options Open"
+                      value={String(data.summary.options_open_positions)}
+                      sub={`${data.summary.options_closed_trades} option closes in range`}
+                      tone="text-blue-300"
+                      hint="Open and recently closed option positions included in report totals."
                     />
                     <KpiCard
                       label="Engine Reliability"
@@ -1000,6 +1032,59 @@ export default function AdminReportsPage() {
                       </div>
                     </section>
                   </div>
+
+                  <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                    <div className="border-b border-gray-800 px-5 py-4">
+                      <h2 className="text-base font-semibold text-white">Option Exit Reason Audit</h2>
+                      <p className="mt-1 text-sm text-gray-400">Auto and manual option exits grouped by user and symbol for risk-ops review.</p>
+                    </div>
+                    <div className="p-5 space-y-4">
+                      {data.diagnostics.option_exit_reasons ? (
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                          <div className="rounded-2xl bg-[#1a1f2e] p-3 text-xs text-gray-300">Trail Stop: <span className="text-white font-semibold">{data.diagnostics.option_exit_reasons.trail_stop_from_peak}</span></div>
+                          <div className="rounded-2xl bg-[#1a1f2e] p-3 text-xs text-gray-300">Hard Stop: <span className="text-white font-semibold">{data.diagnostics.option_exit_reasons.hard_loss_stop}</span></div>
+                          <div className="rounded-2xl bg-[#1a1f2e] p-3 text-xs text-gray-300">Manual: <span className="text-white font-semibold">{data.diagnostics.option_exit_reasons.manual}</span></div>
+                          <div className="rounded-2xl bg-[#1a1f2e] p-3 text-xs text-gray-300">Expiry: <span className="text-white font-semibold">{data.diagnostics.option_exit_reasons.expiry}</span></div>
+                          <div className="rounded-2xl bg-[#1a1f2e] p-3 text-xs text-gray-300">Other: <span className="text-white font-semibold">{data.diagnostics.option_exit_reasons.other}</span></div>
+                        </div>
+                      ) : null}
+
+                      {!data.diagnostics.option_exit_audit_rows || data.diagnostics.option_exit_audit_rows.length === 0 ? (
+                        <div className="text-sm text-gray-500">No closed option exits in this window.</div>
+                      ) : (
+                        <div className="overflow-x-auto rounded-2xl border border-white/10">
+                          <table className="w-full min-w-[880px] text-sm">
+                            <thead className="bg-[#151b27] text-xs uppercase tracking-wide text-gray-400">
+                              <tr>
+                                <th className="px-3 py-2 text-left">User</th>
+                                <th className="px-3 py-2 text-left">Email</th>
+                                <th className="px-3 py-2 text-left">Symbol</th>
+                                <th className="px-3 py-2 text-left">Reason</th>
+                                <th className="px-3 py-2 text-right">Exits</th>
+                                <th className="px-3 py-2 text-right">Total P&L</th>
+                                <th className="px-3 py-2 text-left">Last Exit</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {data.diagnostics.option_exit_audit_rows.map((row, idx) => (
+                                <tr key={`${row.user_id}-${row.symbol}-${row.reason}-${idx}`} className="border-t border-white/5 bg-[#11151c]">
+                                  <td className="px-3 py-2 text-gray-200">{row.user_name || row.user_id.slice(0, 8)}</td>
+                                  <td className="px-3 py-2 text-gray-400">{row.user_email || "—"}</td>
+                                  <td className="px-3 py-2 text-white font-medium">{row.symbol}</td>
+                                  <td className="px-3 py-2 text-amber-300">{row.reason}</td>
+                                  <td className="px-3 py-2 text-right text-gray-200">{row.exits}</td>
+                                  <td className={`px-3 py-2 text-right ${toNumber(row.total_pnl) >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                                    {formatMoney(row.total_pnl)}
+                                  </td>
+                                  <td className="px-3 py-2 text-gray-400">{row.last_exit_at ? new Date(row.last_exit_at).toLocaleString() : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </section>
                 </>
               ) : null}
 

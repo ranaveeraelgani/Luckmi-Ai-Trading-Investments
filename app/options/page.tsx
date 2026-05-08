@@ -1704,9 +1704,14 @@ export default function OptionsPage() {
       const closeRequested = Number((data as any)?.closeRequested ?? 0);
       const fills = Number((data as any)?.fills?.filled ?? 0);
       const closed = Number((data as any)?.closed ?? 0);
+      const entriesPlaced = Number((data as any)?.entriesPlaced ?? 0);
+      const entriesAttempted = Number((data as any)?.entriesAttempted ?? 0);
+      const entriesRejectedNonExecutable = Number((data as any)?.entriesRejectedNonExecutable ?? 0);
+      const entrySkipReason = String((data as any)?.entrySkipReason ?? '').trim();
 
+      const base = `Options cycle complete · ${entriesPlaced}/${entriesAttempted} entries · ${entriesRejectedNonExecutable} non-executable · ${processed} checked · ${closeRequested} exit requests · ${fills} fills · ${closed} closed`;
       toast.success(
-        `Options cycle complete · ${processed} checked · ${closeRequested} exit requests · ${fills} fills · ${closed} closed`,
+        entriesPlaced === 0 && entrySkipReason ? `${base} · entry skipped: ${entrySkipReason}` : base,
         { id: toastId },
       );
     } catch (err: any) {
