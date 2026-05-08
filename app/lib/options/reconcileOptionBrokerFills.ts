@@ -25,15 +25,25 @@ type UnfilledOrderRow = {
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
-async function fetchUnfilledOptionOrders(limit: number): Promise<UnfilledOrderRow[]> {
+async function fetchUnfilledOptionOrders(limit: number, tradeIds?: string[]): Promise<UnfilledOrderRow[]> {
+  if (tradeIds && tradeIds.length === 0) {
+    return [];
+  }
+
   // Fetch submitted/pending option trade orders that have no fill yet
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('option_trade_orders')
     .select('id, trade_id, broker_order_id, order_role, qty')
     .in('status', ['pending_new', 'new', 'partially_filled', 'accepted', 'held'])
     .is('filled_at', null)
     .order('submitted_at', { ascending: true })
     .limit(limit);
+
+  if (tradeIds) {
+    query = query.in('trade_id', tradeIds);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(`fetchUnfilledOptionOrders: ${error.message}`);
   return (data ?? []) as UnfilledOrderRow[];
@@ -171,13 +181,13 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
 
 // ── Public: batch reconciler ──────────────────────────────────────────────────
 
-export async function reconcileOptionBrokerFills(batchSize = 20): Promise<{
+export async function reconcileOptionBrokerFills(batchSize = 20, tradeIds?: string[]): Promise<{
   processed: number;
   filled: number;
   stillOpen: number;
   skipped: number;
 }> {
-  const orders = await fetchUnfilledOptionOrders(batchSize);
+  const orders = await fetchUnfilledOptionOrders(batchSize, tradeIds);
 
   let filled = 0;
   let stillOpen = 0;

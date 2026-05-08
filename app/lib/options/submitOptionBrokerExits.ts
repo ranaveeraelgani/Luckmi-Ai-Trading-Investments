@@ -41,14 +41,24 @@ type ExitRunOutcome =
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
-async function claimPendingExitRuns(batchSize: number): Promise<PendingExitRun[]> {
-  const { data, error } = await supabaseAdmin
+async function claimPendingExitRuns(batchSize: number, tradeIds?: string[]): Promise<PendingExitRun[]> {
+  if (tradeIds && tradeIds.length === 0) {
+    return [];
+  }
+
+  let query = supabaseAdmin
     .from('option_order_runs')
     .select('id, user_id, trade_id, execution_mode, reason, idempotency_key, request_payload')
     .eq('action', 'close')
     .eq('status', 'pending_submission')
     .order('created_at', { ascending: true })
     .limit(batchSize);
+
+  if (tradeIds) {
+    query = query.in('trade_id', tradeIds);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(`claimPendingExitRuns: ${error.message}`);
   return (data ?? []) as PendingExitRun[];
@@ -220,13 +230,13 @@ async function processExitRun(run: PendingExitRun): Promise<ExitRunOutcome> {
 
 // ── Public: batch processor ───────────────────────────────────────────────────
 
-export async function submitPendingOptionExits(batchSize = 10): Promise<{
+export async function submitPendingOptionExits(batchSize = 10, tradeIds?: string[]): Promise<{
   processed: number;
   submitted: number;
   skipped: number;
   failed: number;
 }> {
-  const runs = await claimPendingExitRuns(batchSize);
+  const runs = await claimPendingExitRuns(batchSize, tradeIds);
 
   let submitted = 0;
   let skipped = 0;

@@ -30,6 +30,8 @@ import {
   OPTIONS_CYCLE_JOB_NAME,
 } from '@/app/lib/engine/jobQueue';
 import { runOptionsTradeJob } from '@/app/lib/options/optionsCycleRunner';
+import { submitPendingOptionExits } from '@/app/lib/options/submitOptionBrokerExits';
+import { reconcileOptionBrokerFills } from '@/app/lib/options/reconcileOptionBrokerFills';
 import { isMarketOpenNowLive } from '@/app/lib/market/isMarketOpenNow';
 
 export const maxDuration = 60;
@@ -51,6 +53,18 @@ const DRAIN_BUDGET_MS = 45_000;
  */
 const LEASE_SECONDS = 120;
 
+const EXITS_TIMEOUT_MS = 10_000;
+const FILLS_TIMEOUT_MS = 10_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+}
+
 export async function POST(req: Request) {
   const auth = req.headers.get('authorization');
   if (auth !== `Bearer ${process.env.ENGINE_SECRET}`) {
@@ -68,10 +82,6 @@ export async function POST(req: Request) {
       leaseSeconds: LEASE_SECONDS,
     });
 
-    if (jobs.length === 0) {
-      return NextResponse.json({ success: true, claimedJobs: 0, processed: 0 });
-    }
-
     let closed = 0;
     let closeRequested = 0;
     let peakUpdated = 0;
@@ -81,6 +91,9 @@ export async function POST(req: Request) {
     let skippedOther = 0;
     let errors = 0;
     let budgetExceeded = false;
+    let brokerPartialErrors: string[] = [];
+    let exits = { processed: 0, submitted: 0, skipped: 0, failed: 0 };
+    let fills = { processed: 0, filled: 0, stillOpen: 0, skipped: 0 };
 
     const drainStartedAt = Date.now();
 
@@ -129,15 +142,37 @@ export async function POST(req: Request) {
       }
     }
 
+    const [exitsResult, fillsResult] = await Promise.allSettled([
+      withTimeout(submitPendingOptionExits(10), EXITS_TIMEOUT_MS, 'submitPendingOptionExits'),
+      withTimeout(reconcileOptionBrokerFills(20), FILLS_TIMEOUT_MS, 'reconcileOptionBrokerFills'),
+    ]);
+
+    if (exitsResult.status === 'fulfilled') {
+      exits = exitsResult.value;
+    } else {
+      brokerPartialErrors.push(exitsResult.reason?.message ?? String(exitsResult.reason));
+    }
+
+    if (fillsResult.status === 'fulfilled') {
+      fills = fillsResult.value;
+    } else {
+      brokerPartialErrors.push(fillsResult.reason?.message ?? String(fillsResult.reason));
+    }
+
     console.info(
       `[options-jobs-drain] batch done claimed=${jobs.length} ` +
         `closed=${closed} closeRequested=${closeRequested} peakUpdated=${peakUpdated} ` +
         `priceUnavailable=${priceUnavailable} skipped=${skipped} ` +
-        `skippedAutoExitDisabled=${skippedAutoExitDisabled} skippedOther=${skippedOther} errors=${errors}`,
+        `skippedAutoExitDisabled=${skippedAutoExitDisabled} skippedOther=${skippedOther} errors=${errors} ` +
+        `exitSubmitted=${exits.submitted} fillsProcessed=${fills.processed} fillsFilled=${fills.filled}`,
     );
 
+    if (brokerPartialErrors.length > 0) {
+      console.warn('[options-jobs-drain] broker follow-up partial errors:', brokerPartialErrors.join(' | '));
+    }
+
     return NextResponse.json({
-      success: true,
+      success: errors === 0 && brokerPartialErrors.length === 0,
       claimedJobs: jobs.length,
       processed: jobs.length,
       budgetExceeded,
@@ -149,6 +184,9 @@ export async function POST(req: Request) {
       skippedAutoExitDisabled,
       skippedOther,
       errors,
+      exits,
+      fills,
+      brokerPartialErrors,
     });
   } catch (err: any) {
     const message = err?.message ?? 'Drain failed';

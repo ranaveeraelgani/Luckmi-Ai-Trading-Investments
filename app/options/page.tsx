@@ -833,6 +833,7 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
 function PaperTradesPanel({
   trades,
   loading,
+  refreshing,
   onClose,
   onRefresh,
   onPickSymbol,
@@ -840,6 +841,7 @@ function PaperTradesPanel({
 }: {
   trades: PaperTrade[];
   loading: boolean;
+  refreshing: boolean;
   onClose: (t: PaperTrade) => void;
   onRefresh: () => void;
   onPickSymbol: (symbol: string | null) => void;
@@ -909,7 +911,14 @@ function PaperTradesPanel({
             </span>
           )}
         </div>
-        <button type="button" onClick={onRefresh} className="text-xs text-gray-500 hover:text-gray-300 transition">↺ Refresh</button>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {refreshing ? 'Refreshing…' : '↺ Refresh Positions'}
+        </button>
       </div>
       {openSymbols.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1503,6 +1512,7 @@ export default function OptionsPage() {
   const [savingPaperTrade, setSavingPaperTrade] = useState(false);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
   const [paperTradesLoading, setPaperTradesLoading] = useState(true);
+  const [paperTradesRefreshing, setPaperTradesRefreshing] = useState(false);
   const [closeTarget, setCloseTarget] = useState<PaperTrade | null>(null);
   const [closingTrade, setClosingTrade] = useState(false);
   const [activePositionSymbol, setActivePositionSymbol] = useState<string | null>(null);
@@ -1512,6 +1522,7 @@ export default function OptionsPage() {
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [optionsCycleRunning, setOptionsCycleRunning] = useState(false);
 
   // Broker mode — paper/live execution if Alpaca is connected
   const [brokerMode, setBrokerMode] = useState<'paper' | 'live' | null>(null);
@@ -1651,8 +1662,12 @@ export default function OptionsPage() {
     void validateExecutableTop30();
   }, [opportunities, dataMode, brokerMode]);
 
-  async function loadPaperTrades() {
-    setPaperTradesLoading(true);
+  async function loadPaperTrades(mode: 'initial' | 'refresh' = 'refresh') {
+    if (mode === 'initial') {
+      setPaperTradesLoading(true);
+    } else {
+      setPaperTradesRefreshing(true);
+    }
     try {
       const res = await fetch('/api/options/paper-trade');
       if (res.ok) {
@@ -1663,6 +1678,51 @@ export default function OptionsPage() {
       // silently fail — not critical
     } finally {
       setPaperTradesLoading(false);
+      setPaperTradesRefreshing(false);
+    }
+  }
+
+  async function runOptionsCycle() {
+    if (optionsCycleRunning) return;
+
+    setOptionsCycleRunning(true);
+    const toastId = toast.loading('Running options cycle...');
+
+    try {
+      const res = await fetch('/api/options/run-cycle-user');
+      const data = await res.json().catch(() => ({}));
+
+      await Promise.all([loadPaperTrades(), load()]);
+
+      if (!res.ok) {
+        if (res.status === 403 && (data as any)?.message === 'Market is closed.') {
+          const filled = Number((data as any)?.fills?.filled ?? 0);
+          const processed = Number((data as any)?.fills?.processed ?? 0);
+          toast.message(
+            filled > 0
+              ? `Market closed. Reconciled ${filled} option fill${filled === 1 ? '' : 's'}.`
+              : `Market closed. Checked ${processed} pending option order${processed === 1 ? '' : 's'}.`,
+            { id: toastId },
+          );
+          return;
+        }
+
+        throw new Error((data as any)?.message || (data as any)?.error || 'Options cycle failed');
+      }
+
+      const processed = Number((data as any)?.processed ?? 0);
+      const closeRequested = Number((data as any)?.closeRequested ?? 0);
+      const fills = Number((data as any)?.fills?.filled ?? 0);
+      const closed = Number((data as any)?.closed ?? 0);
+
+      toast.success(
+        `Options cycle complete · ${processed} checked · ${closeRequested} exit requests · ${fills} fills · ${closed} closed`,
+        { id: toastId },
+      );
+    } catch (err: any) {
+      toast.error(err?.message || 'Options cycle failed', { id: toastId });
+    } finally {
+      setOptionsCycleRunning(false);
     }
   }
 
@@ -1754,7 +1814,7 @@ export default function OptionsPage() {
     }
   }
 
-  useEffect(() => { loadPaperTrades(); }, []);
+  useEffect(() => { loadPaperTrades('initial'); }, []);
 
   // Auto-refresh positions every 60 s when auto-entry is ON
   // so background cron-placed trades surface without manual refresh
@@ -1881,6 +1941,14 @@ export default function OptionsPage() {
               className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:border-white/20 transition"
             >
               📋 History
+            </button>
+            <button
+              type="button"
+              onClick={runOptionsCycle}
+              disabled={optionsCycleRunning}
+              className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {optionsCycleRunning ? 'Running Cycle…' : 'Run Options Cycle'}
             </button>
             <button
               type="button"
@@ -2077,6 +2145,7 @@ export default function OptionsPage() {
               <PaperTradesPanel
                 trades={paperTrades}
                 loading={paperTradesLoading}
+                refreshing={paperTradesRefreshing}
                 onClose={setCloseTarget}
                 onRefresh={loadPaperTrades}
                 onPickSymbol={setActivePositionSymbol}

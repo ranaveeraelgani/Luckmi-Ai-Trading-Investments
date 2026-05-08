@@ -240,12 +240,17 @@ async function savePeakPnl(tradeId: string, peakPnl: number): Promise<void> {
  * Called by the options-cycle cron route before calling enqueueOptionsCycleJobs().
  */
 export async function fetchAllOpenTradeIds(): Promise<string[]> {
+  return fetchOpenTradeIdsForUser();
+}
+
+export async function fetchOpenTradeIdsForUser(userId?: string): Promise<string[]> {
   const { data, error } = await supabaseAdmin
     .from('option_paper_trades')
     .select('id')
-    .eq('status', 'open');
+    .eq('status', 'open')
+    .match(userId ? { user_id: userId } : {});
 
-  if (error) throw new Error(`fetchAllOpenTradeIds: ${error.message}`);
+  if (error) throw new Error(`fetchOpenTradeIdsForUser: ${error.message}`);
   return (data ?? []).map((r: any) => r.id as string);
 }
 

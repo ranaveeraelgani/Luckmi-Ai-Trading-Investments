@@ -80,12 +80,8 @@ function evaluateTrailStop(params: {
 
 // ─── Live option pricing for open positions ─────────────────────────────────
 
-function getOptionsApiBase() {
-  return process.env.MASSIVE_API_BASE_URL || 'https://api.polygon.io';
-}
-
-function getOptionsApiKey() {
-  return process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || '';
+function getPolygonApiKey() {
+  return process.env.POLYGON_API_KEY || '';
 }
 
 function buildOccSymbol(
@@ -103,14 +99,13 @@ function buildOccSymbol(
 }
 
 async function fetchOptionMidPrice(underlying: string, occSymbol: string): Promise<number | null> {
-  const apiKey = getOptionsApiKey();
+  const apiKey = getPolygonApiKey();
   if (!apiKey) return null;
 
   try {
-    const base = getOptionsApiBase().replace(/\/$/, '');
     const url =
-      `${base}/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(occSymbol)}` +
-      `?apiKey=${encodeURIComponent(apiKey)}`;
+      `https://api.polygon.io/v3/snapshot/options/${encodeURIComponent(underlying)}/${encodeURIComponent(occSymbol)}` +
+      `?apiKey=${apiKey}`;
 
     const res = await fetch(url, {
       cache: 'no-store',

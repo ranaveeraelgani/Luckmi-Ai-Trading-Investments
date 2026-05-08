@@ -142,16 +142,42 @@ export async function enqueueOptionsCycleJobs(tradeIds: string[]) {
   const toEnqueue = deduped.filter((id) => !activeTradeIds.has(id));
 
   if (toEnqueue.length > 0) {
+    const { data: trades, error: tradesError } = await supabaseAdmin
+      .from('option_paper_trades')
+      .select('id, user_id')
+      .in('id', toEnqueue);
+
+    if (tradesError) throw tradesError;
+
+    const tradeUserById = new Map(
+      (trades ?? [])
+        .filter((row: any) => row?.id && row?.user_id)
+        .map((row: any) => [row.id as string, row.user_id as string]),
+    );
+
+    const jobsToInsert = toEnqueue
+      .map((tradeId) => {
+        const userId = tradeUserById.get(tradeId);
+        if (!userId) return null;
+        return {
+          job_name: OPTIONS_CYCLE_JOB_NAME,
+          user_id: userId,
+          status: 'pending' as const,
+          payload: { tradeId },
+        };
+      })
+      .filter(Boolean);
+
+    if (jobsToInsert.length === 0) {
+      return { enqueued: 0, skipped: deduped.length };
+    }
+
     const { error: insertError } = await supabaseAdmin
       .from('engine_jobs')
-      .insert(
-        toEnqueue.map((tradeId) => ({
-          job_name: OPTIONS_CYCLE_JOB_NAME,
-          status: 'pending',
-          payload: { tradeId },
-        })),
-      );
+      .insert(jobsToInsert);
     if (insertError) throw insertError;
+
+    return { enqueued: jobsToInsert.length, skipped: deduped.length - jobsToInsert.length };
   }
 
   return { enqueued: toEnqueue.length, skipped: deduped.length - toEnqueue.length };
