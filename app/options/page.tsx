@@ -413,6 +413,7 @@ type PaperTrade = {
   current_pnl?: number | null;
   peak_pnl?: number | null;
   qty_contracts?: number | null;
+  broker_entry_price?: number | null;
   notes: string | null;
   ai_decision?: AiDecisionRecord | null;
 };
@@ -777,6 +778,7 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
   const hasLivePnl = !isClosed && trade.current_pnl != null;
   const hasLiveValue = !isClosed && trade.current_value != null;
   const qty = Math.max(1, Math.floor(Number(trade.qty_contracts ?? 1)));
+  const avgEntry = trade.broker_entry_price != null ? trade.broker_entry_price : trade.net_debit;
   const typeLabel = trade.option_type === 'put' ? 'Put' : trade.option_type === 'call' ? 'Call' : '—';
   const strikeLabel =
     trade.long_strike != null && trade.short_strike != null
@@ -810,7 +812,7 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
           <span>{new Date(trade.entry_at).toLocaleDateString()}</span>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-gray-400 sm:grid-cols-3 lg:grid-cols-6">
-          <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Avg Entry: {fmt$(trade.net_debit)}</span>
+          <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Avg Entry: {fmt$(avgEntry)}</span>
           <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Expiration: {expiryLabel}</span>
           <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Current: {hasLiveValue ? fmt$(trade.current_value!) : '—'}</span>
           <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Strike: {strikeLabel}</span>
@@ -819,7 +821,7 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
         </div>
       </div>
       <div className="text-right shrink-0">
-        <div className="text-xs text-gray-500">avg entry {fmt$(trade.net_debit)}</div>
+        <div className="text-xs text-gray-500">avg entry {fmt$(avgEntry)}</div>
         {isClosed && trade.pnl != null ? (
           <>
             <div className="text-[10px] text-gray-500">P&L</div>

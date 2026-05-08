@@ -16,6 +16,7 @@ import { getOptionPreferences } from '@/app/lib/db/optionPreferences';
 import { DEFAULT_OPTION_PREFERENCES } from '@/app/lib/db/optionPreferences';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
 import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
+import { syncOptionTradeNetDebitFromEntryFills } from '@/app/lib/options/syncOptionTradeNetDebit';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -354,6 +355,9 @@ export async function placeOptionsBrokerEntry(
         .eq('id', tradeId);
     }
   }
+
+  // If broker fill prices are already available, align trade net_debit with real fills.
+  await syncOptionTradeNetDebitFromEntryFills(tradeId);
 
   // 8. Persist AI decision record if AI fields were supplied
   if (req.aiAction) {

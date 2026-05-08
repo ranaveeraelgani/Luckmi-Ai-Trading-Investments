@@ -162,6 +162,53 @@ export async function GET() {
 
     const trades = data ?? [];
 
+    // Compute broker-filled entry averages per trade from option_trade_orders.
+    const entryPriceByTradeId = new Map<string, number>();
+    if (trades.length > 0) {
+      const tradeIds = trades.map((t: any) => t.id).filter(Boolean);
+      const { data: entryOrders } = await supabase
+        .from('option_trade_orders')
+        .select('trade_id, side, filled_avg_price, filled_qty, qty')
+        .in('trade_id', tradeIds)
+        .eq('order_role', 'entry');
+
+      const buckets = new Map<string, { buyNotional: number; sellNotional: number; buyQty: number }>();
+      for (const row of entryOrders ?? []) {
+        const tradeId = row.trade_id as string;
+        if (!tradeId) continue;
+
+        const price = Number(row.filled_avg_price ?? null);
+        if (!Number.isFinite(price) || price <= 0) continue;
+
+        const filledQty = Number(row.filled_qty ?? null);
+        const fallbackQty = Number(row.qty ?? null);
+        const qty = Number.isFinite(filledQty) && filledQty > 0
+          ? filledQty
+          : Number.isFinite(fallbackQty) && fallbackQty > 0
+            ? fallbackQty
+            : 0;
+        if (qty <= 0) continue;
+
+        const curr = buckets.get(tradeId) ?? { buyNotional: 0, sellNotional: 0, buyQty: 0 };
+        if (row.side === 'sell') {
+          curr.sellNotional += price * qty;
+        } else {
+          curr.buyNotional += price * qty;
+          curr.buyQty += qty;
+        }
+        buckets.set(tradeId, curr);
+      }
+
+      for (const [tradeId, b] of buckets.entries()) {
+        if (b.buyQty > 0) {
+          const debit = (b.buyNotional - b.sellNotional) / b.buyQty;
+          if (Number.isFinite(debit) && debit >= 0) {
+            entryPriceByTradeId.set(tradeId, debit);
+          }
+        }
+      }
+    }
+
     // Attach ai_decisions records (non-fatal if query fails)
     let decisionMap: Map<string, any> = new Map();
     try {
@@ -182,6 +229,7 @@ export async function GET() {
 
     const tradesWithAi = trades.map((t: any) => ({
       ...t,
+      broker_entry_price: entryPriceByTradeId.get(t.id) ?? null,
       ai_decision: decisionMap.get(t.id) ?? null,
     }));
 

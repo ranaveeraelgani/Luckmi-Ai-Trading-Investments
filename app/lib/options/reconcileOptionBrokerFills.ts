@@ -13,6 +13,7 @@ import { getUserBrokerCredentials } from '@/app/lib/broker/getUserBrokerCredenti
 import { getAlpacaOrder } from '@/app/lib/broker/alpaca';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
 import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
+import { syncOptionTradeNetDebitFromEntryFills } from '@/app/lib/options/syncOptionTradeNetDebit';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,8 +132,9 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
   const filledAvgPrice = Number(alpacaOrder.filled_avg_price);
 
   if (row.order_role === 'entry') {
-    // Entry confirmed — update broker_status
+    // Entry confirmed — update broker_status and align trade debit with real fill prices
     await markEntryFilled(row.trade_id);
+    await syncOptionTradeNetDebitFromEntryFills(row.trade_id);
     return 'filled';
   }
 
