@@ -22,6 +22,7 @@ type UnfilledOrderRow = {
   trade_id: string;
   broker_order_id: string;
   order_role: 'entry' | 'exit';
+  side: 'buy' | 'sell';
   qty: number;
 };
 
@@ -35,7 +36,7 @@ async function fetchUnfilledOptionOrders(limit: number, tradeIds?: string[]): Pr
   // Fetch submitted/pending option trade orders that have no fill yet
   let query = supabaseAdmin
     .from('option_trade_orders')
-    .select('id, trade_id, broker_order_id, order_role, qty')
+    .select('id, trade_id, broker_order_id, order_role, side, qty')
     .in('status', ['pending_new', 'new', 'partially_filled', 'accepted', 'held'])
     .is('filled_at', null)
     .order('submitted_at', { ascending: true })
@@ -135,6 +136,30 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
     // Entry confirmed — update broker_status and align trade debit with real fill prices
     await markEntryFilled(row.trade_id);
     await syncOptionTradeNetDebitFromEntryFills(row.trade_id);
+
+    // For spread entries there are two entry orders (buy long + sell short).
+    // Notify only on the buy/long leg to avoid duplicate fill notifications.
+    if (row.side === 'buy') {
+      const { data: trade } = await supabaseAdmin
+        .from('option_paper_trades')
+        .select('user_id, symbol, strategy, qty_contracts')
+        .eq('id', row.trade_id)
+        .maybeSingle();
+
+      if (trade?.user_id) {
+        const qty = Number(trade.qty_contracts ?? row.qty ?? 1);
+        await enqueueNotificationEvent({
+          userId: trade.user_id,
+          type: 'option_entry',
+          title: `Option entry filled: ${trade.symbol}`,
+          body: `${String(trade.strategy || 'option').replace(/_/g, ' ')} filled at $${filledAvgPrice.toFixed(4)} — ${qty} contract(s)`,
+          url: '/options',
+          idempotencyKey: `option-entry-filled:${row.trade_id}:${row.broker_order_id}`,
+          metadata: { tradeId: row.trade_id, fillPrice: filledAvgPrice, qty },
+        });
+      }
+    }
+
     return 'filled';
   }
 

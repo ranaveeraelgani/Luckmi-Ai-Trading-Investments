@@ -65,6 +65,30 @@ export async function GET() {
       .eq("user_id", user.id)
       .eq("broker", "alpaca");
 
+    const { data: optionTrades } = await supabase
+      .from("option_paper_trades")
+      .select(`
+        id,
+        symbol,
+        strategy,
+        option_type,
+        direction,
+        long_strike,
+        long_expiry,
+        short_strike,
+        short_expiry,
+        net_debit,
+        qty_contracts,
+        pnl,
+        status,
+        broker_status,
+        created_at,
+        updated_at
+      `)
+      .eq("user_id", user.id)
+      .eq("status", "open")
+      .order("created_at", { ascending: false });
+
     const brokerMap = new Map(
       (brokerPositions || [])
         .filter((bp) => bp.auto_stock_id)
@@ -128,8 +152,43 @@ export async function GET() {
       })
       .filter(Boolean);
 
+    const optionResult = (optionTrades || []).map((trade: any) => {
+      const contracts = n(trade.qty_contracts, 1);
+      const entryPricePerShare = n(trade.net_debit);
+      const contractMultiplier = 100;
+      const basis = contracts * entryPricePerShare * contractMultiplier;
+
+      return {
+        id: trade.id,
+        source: "auto",
+        assetType: "option",
+        symbol: String(trade.symbol || "").toUpperCase(),
+        strategy: trade.strategy || null,
+        optionType: trade.option_type || null,
+        direction: trade.direction || null,
+        longStrike: trade.long_strike ?? null,
+        longExpiry: trade.long_expiry ?? null,
+        shortStrike: trade.short_strike ?? null,
+        shortExpiry: trade.short_expiry ?? null,
+        contracts,
+        shares: contracts,
+        avgPrice: entryPricePerShare,
+        entryPrice: entryPricePerShare,
+        currentPrice: null,
+        marketValue: null,
+        pnl: trade.pnl != null ? n(trade.pnl) : null,
+        pnlPercent: basis > 0 && trade.pnl != null ? (n(trade.pnl) / basis) * 100 : null,
+        allocation: null,
+        status: trade.status ?? null,
+        brokerStatus: trade.broker_status ?? null,
+        lastAiDecision: null,
+        brokerPositionId: null,
+        lastSyncedAt: trade.updated_at ?? null,
+      };
+    });
+
     return NextResponse.json({
-      positions: result,
+      positions: [...result, ...optionResult],
     });
   } catch (err: any) {
     return NextResponse.json(

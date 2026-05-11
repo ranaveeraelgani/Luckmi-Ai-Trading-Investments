@@ -10,8 +10,10 @@ type Mode = "personal" | "auto";
 type PortfolioItem = {
   id?: string;
   source?: "personal" | "auto";
+  assetType?: "stock" | "option";
   symbol: string;
   shares?: number;
+  contracts?: number;
   avgPrice?: number;
   entryPrice?: number | null;
   currentPrice?: number | null;
@@ -19,6 +21,11 @@ type PortfolioItem = {
   pnl?: number | null;
   pnlPercent?: number | null;
   status?: string | null;
+  strategy?: string | null;
+  longStrike?: number | null;
+  longExpiry?: string | null;
+  shortStrike?: number | null;
+  shortExpiry?: string | null;
   lastAiDecision?: {
     action?: string;
     confidence?: number;
@@ -265,6 +272,7 @@ export default function PortfolioPage() {
           ) : (
             portfolio.map((item, index) => {
               const quote = quotes[item.symbol];
+              const isOptionRow = mode === "auto" && item.assetType === "option";
 
               const currentPrice =
                 item.currentPrice != null
@@ -282,6 +290,7 @@ export default function PortfolioPage() {
                   : Number(changePercentRaw);
 
               const shares = Number(item.shares ?? 0);
+              const contracts = Number(item.contracts ?? item.shares ?? 0);
               const avgPrice = Number(item.avgPrice ?? item.entryPrice ?? 0);
               const marketValue =
                 item.marketValue != null
@@ -314,8 +323,15 @@ export default function PortfolioPage() {
                           {item.symbol}
                         </div>
                         <div className="mt-1 text-sm text-gray-400">
-                          {shares || "—"} shares · Avg {formatMoney(avgPrice || null)}
+                          {isOptionRow
+                            ? `${contracts || "—"} contract${contracts === 1 ? "" : "s"} · Debit ${formatMoney(avgPrice || null)}`
+                            : `${shares || "—"} shares · Avg ${formatMoney(avgPrice || null)}`}
                         </div>
+                        {isOptionRow && item.strategy ? (
+                          <div className="mt-1 text-xs text-gray-500">
+                            {item.strategy.replace(/_/g, " ")}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="text-right">
@@ -344,10 +360,14 @@ export default function PortfolioPage() {
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => router.push(`/portfolio/${item.symbol}`)}
+                      onClick={() =>
+                        isOptionRow
+                          ? router.push("/options")
+                          : router.push(`/portfolio/${item.symbol}`)
+                      }
                       className="rounded-xl border border-gray-700 bg-[#0f141b] px-3 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-300"
                     >
-                      View analysis
+                      {isOptionRow ? "View options" : "View analysis"}
                     </button>
 
                     {mode === "personal" ? (
