@@ -34,6 +34,75 @@ const normalizeLastClose = (
   return null;
 };
 
+export type AiRecommendationResult = {
+  action: 'Buy' | 'Hold' | 'Avoid' | 'Sell' | 'Strong Buy';
+  reason: string;
+  aiScore: number | null;
+  confidence: number;
+  riskFlags: string;
+};
+
+type CachedAiRecommendation = {
+  result: AiRecommendationResult;
+  cachedAtMs: number;
+};
+
+const AI_RECOMMENDATION_CACHE_TTL_MS = 25 * 60 * 1000;
+const aiRecommendationCache = new Map<string, CachedAiRecommendation>();
+
+const normalizeText = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const normalizeLevels = (levels?: {
+  support?: number | null;
+  resistance?: number | null;
+  reclaimLevel?: number | null;
+  breakdownLevel?: number | null;
+}) => ({
+  support: Number(levels?.support ?? NaN),
+  resistance: Number(levels?.resistance ?? NaN),
+  reclaimLevel: Number(levels?.reclaimLevel ?? NaN),
+  breakdownLevel: Number(levels?.breakdownLevel ?? NaN),
+});
+
+const buildAiRecommendationCacheKey = (params: {
+  stock: string;
+  ctsScore: number;
+  customInstruction?: string;
+  lastRSI?: number;
+  lastMACD?: string;
+  lastSignal?: string;
+  ema200Last?: string;
+  recentCloses?: number[] | string | null;
+  lastClose?: number | number[] | null;
+  dailyCTS?: number;
+  intradayCTS?: number;
+  alignment?: string;
+  levels?: {
+    support?: number | null;
+    resistance?: number | null;
+    reclaimLevel?: number | null;
+    breakdownLevel?: number | null;
+  };
+}) => JSON.stringify({
+  stock: normalizeText(params.stock),
+  ctsScore: Number(params.ctsScore ?? 0),
+  customInstruction: normalizeText(params.customInstruction),
+  lastRSI: Number(params.lastRSI ?? NaN),
+  lastMACD: normalizeText(params.lastMACD),
+  lastSignal: normalizeText(params.lastSignal),
+  ema200Last: normalizeText(params.ema200Last),
+  recentCloses: normalizeRecentCloses(params.recentCloses).slice(-12).map((value) => Number(value.toFixed(4))),
+  lastClose: normalizeLastClose(params.lastClose),
+  dailyCTS: Number(params.dailyCTS ?? NaN),
+  intradayCTS: Number(params.intradayCTS ?? NaN),
+  alignment: normalizeText(params.alignment),
+  levels: normalizeLevels(params.levels),
+});
+
 export const getAiRecommendation = async (
   stockOverride?: string,
   ctsOverride?: number | null,
@@ -53,16 +122,46 @@ export const getAiRecommendation = async (
     reclaimLevel?: number | null;
     breakdownLevel?: number | null;
   }
-) => {
+) : Promise<AiRecommendationResult> => {
   const stock = stockOverride;
   const ctsScore =
     ctsOverride !== undefined && ctsOverride !== null
       ? ctsOverride
       : 60;
 
-  if (!stock || ctsScore === null) return;
+  if (!stock || ctsScore === null) {
+    return {
+      action: 'Hold',
+      reason: 'Invalid input for AI recommendation',
+      aiScore: null,
+      confidence: 30,
+      riskFlags: 'Invalid input',
+    };
+  }
 
   try {
+    const cacheKey = buildAiRecommendationCacheKey({
+      stock,
+      ctsScore,
+      customInstruction,
+      lastRSI,
+      lastMACD,
+      lastSignal,
+      ema200Last,
+      recentCloses,
+      lastClose,
+      dailyCTS,
+      intradayCTS,
+      alignment,
+      levels,
+    });
+    const nowMs = Date.now();
+    const cached = aiRecommendationCache.get(cacheKey);
+
+    if (cached && nowMs - cached.cachedAtMs <= AI_RECOMMENDATION_CACHE_TTL_MS) {
+      return cached.result;
+    }
+
     const chatApiUrl =
       typeof window === 'undefined'
         ? `${(process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000').replace(/\/$/, '')}/api/chat`
@@ -212,30 +311,40 @@ RISK FLAGS: [comma-separated short phrases OR "None"]
       const confidence = confMatch ? Number(confMatch[1]) : 50;
       const riskFlags = riskFlagsMatch ? riskFlagsMatch[1].trim() : 'None';
 
-    return {
+      const result: AiRecommendationResult = {
         action,
         reason,
         aiScore,
         confidence,
         riskFlags,
       };
+
+      aiRecommendationCache.set(cacheKey, { result, cachedAtMs: nowMs });
+
+      return result;
     } else {
-      return {
+      const fallbackResult: AiRecommendationResult = {
         action: 'Hold',
         reason: 'Could not parse AI recommendation',
         aiScore: null,
         confidence: 30,
         riskFlags: 'Unknown',
       };
+
+      aiRecommendationCache.set(cacheKey, { result: fallbackResult, cachedAtMs: nowMs });
+
+      return fallbackResult;
     }
   } catch (err) {
     console.error('AI recommendation failed:', err);
-    return {
+    const errorResult: AiRecommendationResult = {
       action: 'Hold',
       reason: 'Error connecting to AI service',
       aiScore: null,
       confidence: 30,
       riskFlags: 'System error',
     };
+
+    return errorResult;
   }
 };

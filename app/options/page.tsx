@@ -1282,8 +1282,24 @@ function OpportunityCard({
         )}
       </div>
 
+      {/* Early Indicators - show which components are strong */}
+      <div className="mt-2 flex flex-wrap gap-1">
+        {opp.score.flowScore >= 65 && (
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">Flow {opp.score.flowScore}</span>
+        )}
+        {opp.score.structureScore >= 65 && (
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">Structure {opp.score.structureScore}</span>
+        )}
+        {opp.score.volatilityFitScore >= 65 && (
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">IV {opp.score.volatilityFitScore}</span>
+        )}
+        {opp.score.executionQualityScore >= 65 && (
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">Execution {opp.score.executionQualityScore}</span>
+        )}
+      </div>
+
       {/* Metrics row */}
-      <div className="mt-3 grid grid-cols-4 gap-2">
+      <div className="mt-2 grid grid-cols-4 gap-2">
         <div className="rounded-xl bg-[#1A1F2B] px-2.5 py-2 text-center">
           <div className="text-[10px] uppercase tracking-wide text-gray-500">Debit</div>
           <div className="text-xs font-semibold text-white mt-0.5">{fmt$(opp.netDebit)}</div>

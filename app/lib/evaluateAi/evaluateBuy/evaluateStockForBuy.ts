@@ -3,14 +3,47 @@ import {getNoTradeReasons} from '@/app/lib/evaluateAi/evaluateHelpers/getNoTrade
 import { getTrendStage } from '../evaluateHelpers/getTrendStage';
 import { getMomentumState } from '../evaluateHelpers/getMomentumState';
 import { isFakeBreakout } from '../evaluateHelpers/isFakeBreakout';
+import { detectBullishDivergence, type DivergenceResult } from '../evaluateHelpers/detectBullishDivergence';
+import { detectVolumeAcceleration, type VolumeAccelerationResult } from '../evaluateHelpers/detectVolumeAcceleration';
 import { getBaseUrl } from '@/app/lib/utils/get-base-url';
+
+type DecisionContext = {
+  lastAiDecision?: any;
+  nowMs?: number;
+};
+
+const AI_DECISION_CACHE_TTL_MS = 25 * 60 * 1000;
+
+function getLevelState(price: number, level: number | null | undefined, nearPct = 0.015) {
+  if (!Number.isFinite(price) || !Number.isFinite(Number(level))) return 'n/a';
+  const normalizedLevel = Number(level);
+  if (price < normalizedLevel) return 'below';
+  if (price <= normalizedLevel * (1 + nearPct)) return 'near';
+  return 'above';
+}
+
+function getBuyPriceState(price: number, levels: { support: number | null; resistance: number | null; reclaimLevel: number | null; breakdownLevel: number | null; }) {
+  return [
+    `S:${getLevelState(price, levels.support)}`,
+    `R:${getLevelState(price, levels.resistance)}`,
+    `RC:${getLevelState(price, levels.reclaimLevel)}`,
+    `BD:${getLevelState(price, levels.breakdownLevel, 0.01)}`,
+  ].join('|');
+}
+
+function isFreshCachedDecision(decision: any, nowMs: number) {
+  if (!decision?.timestamp) return false;
+  const decisionTime = new Date(decision.timestamp).getTime();
+  return Number.isFinite(decisionTime) && nowMs - decisionTime <= AI_DECISION_CACHE_TTL_MS;
+}
 
 // Final evaluateStockForBuy - Rich Prompt + Early Cash Check
 export const evaluateStockForBuy = async (
   symbol: string,
   autoStocks: any[],
   currentPrice: number,
-  preloadedIndicatorData?: any
+  preloadedIndicatorData?: any,
+  decisionContext?: DecisionContext
 ) => {
   try {
     if (currentPrice <= 0) {
@@ -63,6 +96,10 @@ export const evaluateStockForBuy = async (
     const resistance = levels.resistance;
     const reclaimLevel = levels.reclaimLevel;
     const breakdownLevel = levels.breakdownLevel;
+    const priceState = getBuyPriceState(currentPrice, levels);
+    const nowMs = decisionContext?.nowMs ?? Date.now();
+    const cachedDecision = decisionContext?.lastAiDecision;
+    const cachedMeta = cachedDecision?.ctsBreakdown?.meta || {};
 
     const customGuidance =
       autoStock.customGuidance || 'No special instruction.';
@@ -76,6 +113,13 @@ export const evaluateStockForBuy = async (
     const intradayVolumes =
       indicatorData.intradayVolumes || [];
 
+    const dailyMacdArr =
+      indicatorData.dailyMacdArr || [];
+    const dailyCloses =
+      indicatorData.dailyCloses || [];
+    const dailyVolumes =
+      indicatorData.dailyVolumes || [];
+
     const momentumState = getMomentumState(
       intradayMacdArr,
       intradaySignalArr
@@ -88,6 +132,91 @@ export const evaluateStockForBuy = async (
 
     const fakeBreakout = isFakeBreakout(intradayCloses, intradayVolumes);
 
+    // NEW: Early-entry enhancement detectors (graded strength 0–1)
+    const divergenceResult: DivergenceResult = detectBullishDivergence(
+      dailyCloses,
+      dailyMacdArr,
+      20
+    );
+    const bullishDivergence = divergenceResult.detected;
+    const divergenceStrength = divergenceResult.strength;
+
+    const volumeResult: VolumeAccelerationResult = detectVolumeAcceleration(
+      intradayCloses,
+      intradayVolumes,
+      5
+    );
+    const volumeAcceleration = volumeResult.detected;
+    const volumeStrength = volumeResult.strength;
+
+    const priceDriftPct =
+      Number.isFinite(Number(cachedDecision?.price)) && Number(cachedDecision?.price) > 0
+        ? Math.abs((currentPrice - Number(cachedDecision.price)) / Number(cachedDecision.price)) * 100
+        : 999;
+
+    const canReuseCachedBuyDecision =
+      cachedDecision?.decisionType === 'buy' &&
+      isFreshCachedDecision(cachedDecision, nowMs) &&
+      cachedMeta.ctsScore === ctsScore &&
+      cachedMeta.dailyCTS === dailyCTS &&
+      cachedMeta.intradayCTS === intradayCTS &&
+      cachedMeta.alignment === alignment &&
+      cachedMeta.momentumState === momentumState &&
+      cachedMeta.trendStage === trendStage &&
+      cachedMeta.fakeBreakout === fakeBreakout &&
+      cachedMeta.bullishDivergence === bullishDivergence &&
+      cachedMeta.divergenceStrength === divergenceStrength &&
+      cachedMeta.volumeAcceleration === volumeAcceleration &&
+      cachedMeta.volumeStrength === volumeStrength &&
+      cachedMeta.priceState === priceState &&
+      priceDriftPct <= 0.75;
+
+    if (canReuseCachedBuyDecision) {
+      const cachedBuyScore = Number(cachedMeta.buyScore ?? 0);
+      const cachedAction = String(cachedDecision.action || 'Hold');
+      const cachedShouldBuy = cachedAction === 'Buy' || cachedAction === 'Buy More';
+      const cachedBreakdown = {
+        ...(indicatorData.breakdown || {}),
+        meta: {
+          ...cachedMeta,
+          priceState,
+        },
+      };
+
+      const noTradeReasons = getNoTradeReasons(
+        ctsScore,
+        Number(lastRSI),
+        Number(lastMACD)
+      );
+
+      if (alignment === 'countertrend_bounce') {
+        noTradeReasons.push('15-minute strength is fighting a weaker daily trend');
+      }
+      if (resistance && currentPrice >= resistance * 0.985) {
+        noTradeReasons.push('Price is very close to resistance');
+      }
+      if (breakdownLevel && currentPrice < breakdownLevel) {
+        noTradeReasons.push('Price is below the recent breakdown level');
+      }
+
+      return {
+        shouldBuy: cachedShouldBuy,
+        entryPrice: cachedShouldBuy ? currentPrice : undefined,
+        reason: cachedDecision.reason || 'Cached AI recommendation reused.',
+        thesis: 'Cached AI recommendation reused.',
+        confidence: Number(cachedDecision.confidence ?? 50),
+        ctsScore,
+        dailyCTS,
+        intradayCTS,
+        alignment,
+        levels,
+        breakdown: cachedBreakdown,
+        buyScore: cachedBuyScore,
+        noTradeReasons,
+        cached: true,
+      };
+    }
+
     // =========================
     // 2. AI PROMPT - NOW DUAL TIMEFRAME
     // =========================
@@ -96,18 +225,27 @@ export const evaluateStockForBuy = async (
 The system already calculates:
 - Daily CTS = higher timeframe trend/regime anchor
 - 15-minute CTS = execution/timing quality
-- Final CTS = weighted result used by the app
+- Final CTS = weighted blended result (65% daily + 35% intraday)
 
-Your role is NOT to choose position size. Your role is to VALIDATE or BLOCK a trade based on alignment, timing, and risk.
+Your role is ADVISORY: validate or flag risk. The deterministic engine makes the final execution decision.
+A "Hold" from you applies a -12 penalty to buyScore. A high-confidence "Buy" adds +6. You cannot override the score threshold.
 
 CORE RULES:
-1. Daily CTS is the PRIMARY anchor.
-2. 15-minute CTS is the timing layer.
-3. If daily and 15-minute CTS align bullishly, default to BUY unless a real red flag exists.
-4. If daily CTS is strong but 15-minute CTS is weak, be cautious about chasing and prefer waiting.
-5. If 15-minute CTS is strong but daily CTS is weak, treat it as a lower-conviction bounce unless there is unusually strong confirmation.
-6. Mention key price levels clearly: support, resistance, reclaim level, or breakdown risk.
-7. In the final sentence, state whether current price is favorable for entry/add, too extended, or should wait for reclaim/support hold.
+1. Daily CTS is the PRIMARY anchor. Strong daily CTS = strong foundation.
+2. 15-minute CTS is the timing layer. Weak intraday = wait for alignment, not necessarily avoid.
+3. If daily and 15-minute CTS align bullishly (bullish_confirmed), default to BUY unless a genuine red flag exists.
+4. If daily CTS is strong but 15-minute weak (bullish_timing_weak): prefer Hold — timing is not right yet.
+5. If 15-minute strong but daily weak (countertrend_bounce): lower conviction; mention risk explicitly.
+6. Bullish Divergence = MACD making higher low while price makes lower low; treat as early reversal confirmation.
+7. Volume Acceleration = surge in volume on upward reversal; treat as high-conviction participation signal.
+8. Mention key price levels clearly: support, resistance, reclaim level, or breakdown risk.
+9. Final sentence: state whether current price is favorable, too extended, or should wait.
+
+CONFIDENCE RUBRIC:
+- 80-100: Confluence is clear — strong CTS, alignment, positive signals, no red flags
+- 65-79: Good setup with one mixed condition but tradable
+- 50-64: Uncertain or one risky element; prefer Hold
+- <50: Significant risk present; use Hold
 
 Current Data:
 Stock: ${symbol}
@@ -136,17 +274,19 @@ Position Status: ${
 Momentum State: ${momentumState}
 Trend Stage: ${trendStage}
 Fake Breakout Risk: ${fakeBreakout ? 'Yes' : 'No'}
+Bullish Divergence: ${bullishDivergence ? `Yes — strength ${(divergenceStrength * 100).toFixed(0)}% (MACD higher low while price made lower low)` : 'No'}
+Volume Acceleration: ${volumeAcceleration ? `Yes — strength ${(volumeStrength * 100).toFixed(0)}% (volume surge on reversal)` : 'No'}
 
-IMPORTANT INTERPRETATION:
-- bullish_confirmed = daily + 15m aligned
-- bullish_timing_weak = daily bullish but 15m weak
-- countertrend_bounce = 15m strong but daily weak
-- bearish_confirmed = both weak
-- mixed = uncertain
+ALIGNMENT GUIDE:
+- bullish_confirmed = daily + 15m both bullish → strong entry window
+- bullish_timing_weak = daily bullish but 15m weak → wait for timing
+- countertrend_bounce = 15m strong but daily weak → risky, lower conviction
+- bearish_confirmed = both weak → avoid
+- mixed = uncertain → caution
 
 Format exactly:
 ACTION: Buy or Hold
-REASON: [4-5 sentences. Sentence 1 must mention Stock ${symbol}, Final CTS, Daily CTS, and 15m CTS with alignment. Sentence 2 should explain higher timeframe context. Sentence 3 should explain execution timing. Sentence 4 should mention support/resistance/reclaim/breakdown risk. Sentence 5 should say whether current price is favorable, extended, or should wait.]
+REASON: [4-5 sentences. Sentence 1: mention ${symbol}, Final CTS, Daily CTS, 15m CTS, and alignment. Sentence 2: higher timeframe context. Sentence 3: execution timing and momentum. Sentence 4: support/resistance/reclaim/breakdown. Sentence 5: whether divergence/volume signals support or weaken the case, and whether entry is favorable or should wait.]
 TRADE THESIS: [1 sentence]
 CONFIDENCE: [0-100]
 
@@ -202,15 +342,15 @@ Decide now.`;
     else if (ctsScore >= 55) buyScore += 15;
     else buyScore -= 20;
 
-    // Higher timeframe anchor
-    if (dailyCTS >= 75) buyScore += 20;
-    else if (dailyCTS >= 65) buyScore += 12;
-    else if (dailyCTS < 55) buyScore -= 18;
+    // Higher timeframe anchor (reduced: finalCTS already embeds 65% of daily)
+    if (dailyCTS >= 75) buyScore += 12;
+    else if (dailyCTS >= 65) buyScore += 7;
+    else if (dailyCTS < 55) buyScore -= 12;
 
-    // Intraday timing
-    if (intradayCTS >= 75) buyScore += 18;
-    else if (intradayCTS >= 65) buyScore += 10;
-    else if (intradayCTS < 55) buyScore -= 12;
+    // Intraday timing (reduced: finalCTS already embeds 35% of intraday)
+    if (intradayCTS >= 75) buyScore += 10;
+    else if (intradayCTS >= 65) buyScore += 6;
+    else if (intradayCTS < 55) buyScore -= 8;
 
     // Alignment logic
     if (alignment === 'bullish_confirmed') buyScore += 15;
@@ -229,9 +369,17 @@ Decide now.`;
     if (trendStage === 'early_trend') buyScore += 10;
     if (trendStage === 'late_trend') buyScore -= 12;
     if (trendStage === 'neutral') buyScore -= 8;
+    if (trendStage === 'downtrend') buyScore -= 10;
 
-    // Fake breakout risk
-    if (fakeBreakout) buyScore -= 30;
+    // Fake breakout risk (context-aware: strong confirmed daily structure gets a softer penalty)
+    const fakeBreakoutPenalty = fakeBreakout
+      ? (dailyCTS >= 70 && alignment === 'bullish_confirmed' ? 15 : 30)
+      : 0;
+    buyScore -= fakeBreakoutPenalty;
+
+    // NEW: Early-entry enhancements (graded by signal strength)
+    if (bullishDivergence) buyScore += Math.round(8 * divergenceStrength);
+    if (volumeAcceleration) buyScore += Math.round(6 * volumeStrength);
 
     // Price-vs-level context
     if (reclaimLevel && currentPrice > reclaimLevel) buyScore += 6;
@@ -243,6 +391,10 @@ Decide now.`;
     // AI veto softness
     if (action === 'Hold') buyScore -= 12;
     if (confidence >= 80 && action === 'Buy') buyScore += 6;
+
+    // Saturation cap keeps score distribution interpretable and prevents runaway stacking.
+    const rawBuyScore = buyScore;
+    buyScore = Math.min(buyScore, 100);
 
     const shouldBuy = buyScore >= 50;
 
@@ -258,6 +410,13 @@ Decide now.`;
         momentumState,
         trendStage,
         fakeBreakout,
+        fakeBreakoutPenalty,
+        rawBuyScore,
+        priceState,
+        bullishDivergence,
+        divergenceStrength,
+        volumeAcceleration,
+        volumeStrength,
       },
     };
 

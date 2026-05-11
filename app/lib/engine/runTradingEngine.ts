@@ -170,7 +170,8 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                 stock.symbol,
                 stock.currentPosition,
                 currentPrice,
-                sharedIndicatorData
+                sharedIndicatorData,
+                { lastAiDecision: stock.lastAiDecision, nowMs: now }
             );
             let didAction = false;
             let shouldSell = sellDecision?.shouldSell;
@@ -266,6 +267,7 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                     repeat_counter: isFullExit ? repeatCount + 1 : repeatCount,
                     lastAiDecision: {
                         id: decisionId,
+                        decisionType: 'sell',
                         action: 'Sell',
                         price: currentPrice,
                         pnlPercent,
@@ -291,7 +293,8 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                     stock.symbol,
                     updatedStocks,
                     currentPrice,
-                    sharedIndicatorData
+                    sharedIndicatorData,
+                    { lastAiDecision: stock.lastAiDecision, nowMs: now }
                 );
 
                 if (buyResult?.shouldBuy && buyResult.entryPrice) {
@@ -360,6 +363,7 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
 
                         lastAiDecision: {
                             id: decisionId,
+                            decisionType: 'buy',
                             action: 'Buy More',
                             price: buyResult.entryPrice,
                             reason: buyReason,
@@ -390,6 +394,7 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                     lastEvaluatedPrice: currentPrice,
 
                     lastAiDecision: {
+                        decisionType: 'sell',
                         action: 'Hold',
                         price: currentPrice,
                         reason: sellDecision?.reason || "No strong signal",
@@ -436,7 +441,8 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                 stock.symbol,
                 updatedStocks,
                 currentPrice,
-                sharedIndicatorData
+                sharedIndicatorData,
+                { lastAiDecision: stock.lastAiDecision, nowMs: now }
             );
 
             if (buyResult?.shouldBuy && buyResult.entryPrice) {
@@ -500,6 +506,7 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
 
                     lastAiDecision: {
                         id: decisionId,
+                        decisionType: 'buy',
                         action: 'Buy',
                         price: buyResult.entryPrice,
                         reason: buyReason,
@@ -518,6 +525,7 @@ export async function runTradingEngine(stocks: any[], quotes: any, context?: Eng
                     ...stock,
                     lastEvaluatedPrice: currentPrice,
                     lastAiDecision: {
+                        decisionType: 'buy',
                         action: 'Hold',
                         price: currentPrice,
                         reason:
