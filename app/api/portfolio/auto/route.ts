@@ -65,7 +65,7 @@ export async function GET() {
       .eq("user_id", user.id)
       .eq("broker", "alpaca");
 
-    const { data: optionTrades } = await supabase
+    const { data: optionTrades, error: optionTradesError } = await supabase
       .from("option_paper_trades")
       .select(`
         id,
@@ -82,12 +82,16 @@ export async function GET() {
         pnl,
         status,
         broker_status,
-        created_at,
-        updated_at
+        entry_at,
+        exit_at
       `)
       .eq("user_id", user.id)
       .eq("status", "open")
-      .order("created_at", { ascending: false });
+      .order("entry_at", { ascending: false });
+
+    if (optionTradesError) {
+      console.warn("[portfolio:auto] option trades query failed:", optionTradesError.message);
+    }
 
     const brokerMap = new Map(
       (brokerPositions || [])
@@ -183,7 +187,7 @@ export async function GET() {
         brokerStatus: trade.broker_status ?? null,
         lastAiDecision: null,
         brokerPositionId: null,
-        lastSyncedAt: trade.updated_at ?? null,
+        lastSyncedAt: trade.entry_at ?? null,
       };
     });
 
