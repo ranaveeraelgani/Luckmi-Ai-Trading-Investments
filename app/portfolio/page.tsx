@@ -114,7 +114,7 @@ export default function PortfolioPage() {
       setPortfolio(items);
 
       const symbols = items
-        .filter((item: PortfolioItem) => item.currentPrice == null)
+        .filter((item: PortfolioItem) => item.currentPrice == null && item.assetType !== "option")
         .map((item: PortfolioItem) => item.symbol)
         .filter(Boolean);
 
@@ -277,6 +277,8 @@ export default function PortfolioPage() {
               const currentPrice =
                 item.currentPrice != null
                   ? Number(item.currentPrice)
+                  : isOptionRow
+                  ? NaN
                   : typeof quote?.price === "number"
                   ? quote.price
                   : Number(quote?.price);
@@ -292,15 +294,20 @@ export default function PortfolioPage() {
               const shares = Number(item.shares ?? 0);
               const contracts = Number(item.contracts ?? item.shares ?? 0);
               const avgPrice = Number(item.avgPrice ?? item.entryPrice ?? 0);
+              const optionMultiplier = 100;
               const marketValue =
                 item.marketValue != null
                   ? Number(item.marketValue)
+                  : isOptionRow && Number.isFinite(currentPrice) && contracts
+                  ? currentPrice * contracts * optionMultiplier
                   : Number.isFinite(currentPrice) && shares
                   ? shares * currentPrice
                   : null;
               const pnl =
                 item.pnl != null
                   ? Number(item.pnl)
+                  : isOptionRow && Number.isFinite(currentPrice) && contracts && avgPrice
+                  ? (currentPrice - avgPrice) * contracts * optionMultiplier
                   : Number.isFinite(currentPrice) && shares && avgPrice
                   ? (currentPrice - avgPrice) * shares
                   : null;

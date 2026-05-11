@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
 import { getOptionPreferences } from "@/app/lib/db/optionPreferences";
+import { syncAlpacaIfStale } from "@/app/lib/broker/syncAlpacaIfStale";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,12 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    try {
+      await syncAlpacaIfStale(user.id);
+    } catch {
+      // Non-fatal: keep existing DB-derived snapshots if broker sync is unavailable.
+    }
+
     const { data, error } = await supabase
       .from("option_paper_trades")
       .select(
@@ -234,12 +241,103 @@ export async function GET() {
     }));
 
     const openTrades = tradesWithAi.filter((t: any) => t.status === 'open');
+    const brokerFallbackValueByTradeId = new Map<string, number>();
     const priceByTradeId = new Map<string, { current_value: number | null; current_pnl: number | null }>();
+
+    if (openTrades.length > 0) {
+      const openTradeIds = openTrades.map((t: any) => t.id).filter(Boolean);
+
+      const [{ data: openEntryLegs }, { data: optionBrokerPositions }] = await Promise.all([
+        supabase
+          .from('option_trade_orders')
+          .select('trade_id, option_symbol, side, filled_qty, qty')
+          .in('trade_id', openTradeIds)
+          .eq('order_role', 'entry'),
+        supabase
+          .from('broker_positions')
+          .select('symbol, current_price, asset_class')
+          .eq('user_id', user.id)
+          .eq('broker', 'alpaca')
+          .eq('asset_class', 'us_option'),
+      ]);
+
+      const priceByOptionSymbol = new Map<string, number>();
+      for (const row of optionBrokerPositions ?? []) {
+        const symbol = String(row.symbol || '').toUpperCase();
+        const current = Number(row.current_price);
+        if (symbol && Number.isFinite(current) && current >= 0) {
+          priceByOptionSymbol.set(symbol, current);
+        }
+      }
+
+      type LegBucket = {
+        longNotional: number;
+        longQty: number;
+        shortNotional: number;
+        shortQty: number;
+      };
+      const legBuckets = new Map<string, LegBucket>();
+
+      for (const leg of openEntryLegs ?? []) {
+        const tradeId = String(leg.trade_id || '');
+        const optionSymbol = String(leg.option_symbol || '').toUpperCase();
+        if (!tradeId || !optionSymbol) continue;
+
+        const legPriceRaw = priceByOptionSymbol.get(optionSymbol);
+        if (legPriceRaw == null || !Number.isFinite(legPriceRaw)) continue;
+        const legPrice = legPriceRaw;
+
+        const filledQty = Number(leg.filled_qty);
+        const fallbackQty = Number(leg.qty);
+        const qty = Number.isFinite(filledQty) && filledQty > 0
+          ? filledQty
+          : Number.isFinite(fallbackQty) && fallbackQty > 0
+            ? fallbackQty
+            : 1;
+
+        const bucket = legBuckets.get(tradeId) ?? {
+          longNotional: 0,
+          longQty: 0,
+          shortNotional: 0,
+          shortQty: 0,
+        };
+
+        if (String(leg.side || '').toLowerCase() === 'sell') {
+          bucket.shortNotional += legPrice * qty;
+          bucket.shortQty += qty;
+        } else {
+          bucket.longNotional += legPrice * qty;
+          bucket.longQty += qty;
+        }
+
+        legBuckets.set(tradeId, bucket);
+      }
+
+      for (const [tradeId, bucket] of legBuckets.entries()) {
+        if (bucket.longQty <= 0) continue;
+        const longAvg = bucket.longNotional / bucket.longQty;
+        const shortAvg = bucket.shortQty > 0 ? bucket.shortNotional / bucket.shortQty : 0;
+        const spreadValue = longAvg - shortAvg;
+        if (Number.isFinite(spreadValue)) {
+          brokerFallbackValueByTradeId.set(tradeId, spreadValue);
+        }
+      }
+    }
 
     if (openTrades.length > 0) {
       await Promise.all(
         openTrades.map(async (t: any) => {
           try {
+            let currentValue = brokerFallbackValueByTradeId.get(t.id) ?? null;
+            if (currentValue != null) {
+              const currentPnlFromBroker = (Number(currentValue) - Number(t.net_debit)) * 100;
+              priceByTradeId.set(t.id, {
+                current_value: Number.isFinite(currentValue) ? currentValue : null,
+                current_pnl: Number.isFinite(currentPnlFromBroker) ? currentPnlFromBroker : null,
+              });
+              return;
+            }
+
             const longStrike = Number(t.long_strike ?? 0);
             const longExpiry = String(t.long_expiry ?? '');
             const type = (t.option_type === 'put' ? 'put' : 'call') as 'call' | 'put';
@@ -251,22 +349,26 @@ export async function GET() {
 
             const longOcc = buildOccSymbol(t.symbol, longExpiry, type, longStrike);
             const longMid = await fetchOptionMidPrice(t.symbol, longOcc);
-            if (longMid == null) {
-              priceByTradeId.set(t.id, { current_value: null, current_pnl: null });
-              return;
-            }
-
-            let currentValue = longMid;
+            currentValue = longMid;
 
             const shortStrike = t.short_strike != null ? Number(t.short_strike) : null;
             const shortExpiry = t.short_expiry ? String(t.short_expiry) : null;
 
-            if (shortStrike != null && shortExpiry) {
+            if (currentValue != null && shortStrike != null && shortExpiry) {
               const shortOcc = buildOccSymbol(t.symbol, shortExpiry, type, shortStrike);
               const shortMid = await fetchOptionMidPrice(t.symbol, shortOcc);
               if (shortMid != null) {
-                currentValue = longMid - shortMid;
+                currentValue = Number(currentValue) - shortMid;
               }
+            }
+
+            if (currentValue == null) {
+              currentValue = brokerFallbackValueByTradeId.get(t.id) ?? null;
+            }
+
+            if (currentValue == null) {
+              priceByTradeId.set(t.id, { current_value: null, current_pnl: null });
+              return;
             }
 
             // Keep P&L semantics aligned with existing close logic:

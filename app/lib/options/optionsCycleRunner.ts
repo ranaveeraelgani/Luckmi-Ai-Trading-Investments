@@ -26,6 +26,7 @@ import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { enqueueNotificationEvent } from '@/app/lib/db/notifications';
 import { requestOptionBrokerClose } from '@/app/lib/options/requestOptionBrokerClose';
 import { insertOptionExitEvent } from '@/app/lib/options/insertOptionExitEvent';
+import { syncAlpacaIfStale } from '@/app/lib/broker/syncAlpacaIfStale';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,78 @@ async function savePeakPnl(tradeId: string, peakPnl: number): Promise<void> {
   if (error) throw new Error(`savePeakPnl(${tradeId}): ${error.message}`);
 }
 
+async function getBrokerDerivedCurrentValue(trade: OpenTrade): Promise<number | null> {
+  const { data: entryLegs } = await supabaseAdmin
+    .from('option_trade_orders')
+    .select('option_symbol, side, filled_qty, qty')
+    .eq('trade_id', trade.id)
+    .eq('order_role', 'entry');
+
+  if (!entryLegs || entryLegs.length === 0) return null;
+
+  const optionSymbols = Array.from(
+    new Set(
+      entryLegs
+        .map((row: any) => String(row.option_symbol || '').toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  if (optionSymbols.length === 0) return null;
+
+  const { data: brokerRows } = await supabaseAdmin
+    .from('broker_positions')
+    .select('symbol, current_price, asset_class')
+    .eq('user_id', trade.user_id)
+    .eq('broker', 'alpaca')
+    .eq('asset_class', 'us_option')
+    .in('symbol', optionSymbols);
+
+  const priceBySymbol = new Map<string, number>();
+  for (const row of brokerRows ?? []) {
+    const symbol = String(row.symbol || '').toUpperCase();
+    const current = Number(row.current_price);
+    if (symbol && Number.isFinite(current) && current >= 0) {
+      priceBySymbol.set(symbol, current);
+    }
+  }
+
+  let longNotional = 0;
+  let longQty = 0;
+  let shortNotional = 0;
+  let shortQty = 0;
+
+  for (const row of entryLegs) {
+    const symbol = String(row.option_symbol || '').toUpperCase();
+    const legPriceRaw = priceBySymbol.get(symbol);
+    if (legPriceRaw == null || !Number.isFinite(legPriceRaw)) continue;
+    const legPrice = legPriceRaw;
+
+    const filledQty = Number(row.filled_qty);
+    const fallbackQty = Number(row.qty);
+    const qty = Number.isFinite(filledQty) && filledQty > 0
+      ? filledQty
+      : Number.isFinite(fallbackQty) && fallbackQty > 0
+        ? fallbackQty
+        : 1;
+
+    if (String(row.side || '').toLowerCase() === 'sell') {
+      shortNotional += legPrice * qty;
+      shortQty += qty;
+    } else {
+      longNotional += legPrice * qty;
+      longQty += qty;
+    }
+  }
+
+  if (longQty <= 0) return null;
+
+  const longAvg = longNotional / longQty;
+  const shortAvg = shortQty > 0 ? shortNotional / shortQty : 0;
+  const currentValue = longAvg - shortAvg;
+  return Number.isFinite(currentValue) ? currentValue : null;
+}
+
 // ── Public: fetch IDs for the enqueue step ───────────────────────────────────
 
 /**
@@ -299,23 +372,35 @@ export async function runOptionsTradeJob(tradeId: string): Promise<TradeJobOutco
 
   const longCt = deriveLongLegType(trade);
 
-  // Fetch long-leg price
-  const longOcc = buildOccSymbol(trade.symbol, trade.long_expiry, longCt, trade.long_strike);
-  const longPrice = await fetchOptionMidPrice(trade.symbol, longOcc);
-  await sleep(CALL_DELAY_MS);
-
-  if (longPrice === null) {
-    return { action: 'price_unavailable' };
+  // Keep broker option marks fresh enough for stop evaluation; TTL guard prevents over-syncing.
+  try {
+    await syncAlpacaIfStale(trade.user_id);
+  } catch {
+    // Non-fatal: we'll still attempt Polygon pricing.
   }
 
-  // For spreads, fetch short-leg and compute net value
-  let currentValue = longPrice;
-  if (trade.short_strike !== null && trade.short_expiry !== null) {
-    const shortOcc = buildOccSymbol(trade.symbol, trade.short_expiry, longCt, trade.short_strike);
-    const shortPrice = await fetchOptionMidPrice(trade.symbol, shortOcc);
+  // Prefer broker-derived live value; fall back to Polygon when unavailable.
+  let currentValue = await getBrokerDerivedCurrentValue(trade);
+
+  if (currentValue === null) {
+    // Fetch long-leg price
+    const longOcc = buildOccSymbol(trade.symbol, trade.long_expiry, longCt, trade.long_strike);
+    const longPrice = await fetchOptionMidPrice(trade.symbol, longOcc);
     await sleep(CALL_DELAY_MS);
-    if (shortPrice !== null) {
-      currentValue = longPrice - shortPrice;
+
+    if (longPrice === null) {
+      return { action: 'price_unavailable' };
+    }
+
+    // For spreads, fetch short-leg and compute net value
+    currentValue = longPrice;
+    if (trade.short_strike !== null && trade.short_expiry !== null) {
+      const shortOcc = buildOccSymbol(trade.symbol, trade.short_expiry, longCt, trade.short_strike);
+      const shortPrice = await fetchOptionMidPrice(trade.symbol, shortOcc);
+      await sleep(CALL_DELAY_MS);
+      if (shortPrice !== null) {
+        currentValue = longPrice - shortPrice;
+      }
     }
   }
 
