@@ -7,6 +7,20 @@ function n(value: any, fallback = 0) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function buildOccSymbol(
+  underlying: string,
+  expiry: string,
+  contractType: 'call' | 'put',
+  strike: number,
+) {
+  const [year, month, day] = expiry.split('-');
+  const yy = year.slice(2);
+  const cp = contractType === 'call' ? 'C' : 'P';
+  const strikeInt = Math.round(strike * 1000);
+  const strikePadded = strikeInt.toString().padStart(8, '0');
+  return `${underlying.toUpperCase()}${yy}${month}${day}${cp}${strikePadded}`;
+}
+
 export async function GET() {
   try {
     const supabase = await createClient();
@@ -174,6 +188,43 @@ export async function GET() {
       const longAvg = bucket.longNotional / bucket.longQty;
       const shortAvg = bucket.shortQty > 0 ? bucket.shortNotional / bucket.shortQty : 0;
       const currentValue = longAvg - shortAvg;
+      if (Number.isFinite(currentValue)) {
+        optionValueByTradeId.set(tradeId, currentValue);
+      }
+    }
+
+    // Fallback for legacy rows where option_trade_orders legs may be missing.
+    for (const trade of optionTrades || []) {
+      const tradeId = String(trade.id || '');
+      if (!tradeId || optionValueByTradeId.has(tradeId)) continue;
+
+      const longStrike = Number(trade.long_strike ?? 0);
+      const longExpiry = String(trade.long_expiry ?? '');
+      const longType = (trade.option_type === 'put'
+        ? 'put'
+        : trade.option_type === 'call'
+          ? 'call'
+          : trade.strategy === 'put_debit_spread' || trade.strategy === 'long_put'
+            ? 'put'
+            : 'call') as 'call' | 'put';
+
+      if (!trade.symbol || !longExpiry || !Number.isFinite(longStrike) || longStrike <= 0) continue;
+
+      const longSymbol = buildOccSymbol(String(trade.symbol), longExpiry, longType, longStrike);
+      const longPrice = optionPriceBySymbol.get(longSymbol.toUpperCase());
+      if (longPrice == null || !Number.isFinite(longPrice)) continue;
+
+      let currentValue = longPrice;
+      const shortStrike = trade.short_strike != null ? Number(trade.short_strike) : null;
+      const shortExpiry = trade.short_expiry ? String(trade.short_expiry) : null;
+      if (shortStrike != null && shortExpiry) {
+        const shortSymbol = buildOccSymbol(String(trade.symbol), shortExpiry, longType, shortStrike);
+        const shortPrice = optionPriceBySymbol.get(shortSymbol.toUpperCase());
+        if (shortPrice != null && Number.isFinite(shortPrice)) {
+          currentValue = longPrice - shortPrice;
+        }
+      }
+
       if (Number.isFinite(currentValue)) {
         optionValueByTradeId.set(tradeId, currentValue);
       }

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabaseServer";
 import { getOptionPreferences } from "@/app/lib/db/optionPreferences";
 import { syncAlpacaIfStale } from "@/app/lib/broker/syncAlpacaIfStale";
+import { syncAlpacaForUser } from "@/app/lib/broker/syncAlpacaForUser";
+import { reconcileOptionBrokerFills } from "@/app/lib/options/reconcileOptionBrokerFills";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,7 +133,7 @@ async function fetchOptionMidPrice(underlying: string, occSymbol: string): Promi
 
 // ─── GET — list open paper trades for current user ────────────────────────────
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const supabase = await createClient();
     const {
@@ -143,10 +145,33 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    try {
-      await syncAlpacaIfStale(user.id);
-    } catch {
-      // Non-fatal: keep existing DB-derived snapshots if broker sync is unavailable.
+    const { searchParams } = new URL(req.url);
+    const forceSync = searchParams.get("forceSync") === "1";
+
+    if (forceSync) {
+      try {
+        await syncAlpacaForUser(user.id);
+
+        // Reconcile this user's option orders so option_trade_orders and
+        // option_paper_trades broker lifecycle fields are current on manual refresh.
+        const { data: userTradeRows } = await supabase
+          .from("option_paper_trades")
+          .select("id")
+          .eq("user_id", user.id);
+
+        const tradeIds = (userTradeRows ?? []).map((row: any) => String(row.id)).filter(Boolean);
+        if (tradeIds.length > 0) {
+          await reconcileOptionBrokerFills(100, tradeIds);
+        }
+      } catch {
+        // Non-fatal: continue with latest persisted values.
+      }
+    } else {
+      try {
+        await syncAlpacaIfStale(user.id);
+      } catch {
+        // Non-fatal: keep existing DB-derived snapshots if broker sync is unavailable.
+      }
     }
 
     const { data, error } = await supabase
@@ -320,6 +345,42 @@ export async function GET() {
         const spreadValue = longAvg - shortAvg;
         if (Number.isFinite(spreadValue)) {
           brokerFallbackValueByTradeId.set(tradeId, spreadValue);
+        }
+      }
+
+      // Fallback for legacy trades that may not have option_trade_orders legs persisted.
+      for (const t of openTrades) {
+        if (brokerFallbackValueByTradeId.has(String(t.id))) continue;
+
+        const longStrike = Number(t.long_strike ?? 0);
+        const longExpiry = String(t.long_expiry ?? '');
+        const longType = (t.option_type === 'put'
+          ? 'put'
+          : t.option_type === 'call'
+            ? 'call'
+            : t.strategy === 'put_debit_spread' || t.strategy === 'long_put'
+              ? 'put'
+              : 'call') as 'call' | 'put';
+
+        if (!t.symbol || !longExpiry || !Number.isFinite(longStrike) || longStrike <= 0) continue;
+
+        const longSymbol = buildOccSymbol(String(t.symbol), longExpiry, longType, longStrike);
+        const longPrice = priceByOptionSymbol.get(longSymbol.toUpperCase());
+        if (longPrice == null || !Number.isFinite(longPrice)) continue;
+
+        let currentValue = longPrice;
+        const shortStrike = t.short_strike != null ? Number(t.short_strike) : null;
+        const shortExpiry = t.short_expiry ? String(t.short_expiry) : null;
+        if (shortStrike != null && shortExpiry) {
+          const shortSymbol = buildOccSymbol(String(t.symbol), shortExpiry, longType, shortStrike);
+          const shortPrice = priceByOptionSymbol.get(shortSymbol.toUpperCase());
+          if (shortPrice != null && Number.isFinite(shortPrice)) {
+            currentValue = longPrice - shortPrice;
+          }
+        }
+
+        if (Number.isFinite(currentValue)) {
+          brokerFallbackValueByTradeId.set(String(t.id), currentValue);
         }
       }
     }

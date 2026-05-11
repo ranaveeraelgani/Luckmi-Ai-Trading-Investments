@@ -110,6 +110,20 @@ function buildOccSymbol(
   return `O:${underlying}${yy}${month}${day}${cp}${strikePadded}`;
 }
 
+function buildBrokerOccSymbol(
+  underlying: string,
+  expiry: string,
+  contractType: 'call' | 'put',
+  strike: number,
+): string {
+  const [year, month, day] = expiry.split('-');
+  const yy = year.slice(2);
+  const cp = contractType === 'call' ? 'C' : 'P';
+  const strikeInt = Math.round(strike * 1000);
+  const strikePadded = strikeInt.toString().padStart(8, '0');
+  return `${underlying.toUpperCase()}${yy}${month}${day}${cp}${strikePadded}`;
+}
+
 async function fetchOptionMidPrice(
   underlying: string,
   occSymbol: string,
@@ -259,12 +273,19 @@ async function getBrokerDerivedCurrentValue(trade: OpenTrade): Promise<number | 
     .eq('trade_id', trade.id)
     .eq('order_role', 'entry');
 
-  if (!entryLegs || entryLegs.length === 0) return null;
+  const longType = deriveLongLegType(trade);
 
   const optionSymbols = Array.from(
     new Set(
-      entryLegs
-        .map((row: any) => String(row.option_symbol || '').toUpperCase())
+      [
+        ...(entryLegs ?? []).map((row: any) => String(row.option_symbol || '').toUpperCase()),
+        trade.symbol && trade.long_expiry && trade.long_strike != null
+          ? buildBrokerOccSymbol(trade.symbol, trade.long_expiry, longType, Number(trade.long_strike)).toUpperCase()
+          : '',
+        trade.symbol && trade.short_expiry && trade.short_strike != null
+          ? buildBrokerOccSymbol(trade.symbol, trade.short_expiry, longType, Number(trade.short_strike)).toUpperCase()
+          : '',
+      ]
         .filter(Boolean),
     ),
   );
@@ -288,39 +309,59 @@ async function getBrokerDerivedCurrentValue(trade: OpenTrade): Promise<number | 
     }
   }
 
-  let longNotional = 0;
-  let longQty = 0;
-  let shortNotional = 0;
-  let shortQty = 0;
+  if (entryLegs && entryLegs.length > 0) {
+    let longNotional = 0;
+    let longQty = 0;
+    let shortNotional = 0;
+    let shortQty = 0;
 
-  for (const row of entryLegs) {
-    const symbol = String(row.option_symbol || '').toUpperCase();
-    const legPriceRaw = priceBySymbol.get(symbol);
-    if (legPriceRaw == null || !Number.isFinite(legPriceRaw)) continue;
-    const legPrice = legPriceRaw;
+    for (const row of entryLegs) {
+      const symbol = String(row.option_symbol || '').toUpperCase();
+      const legPriceRaw = priceBySymbol.get(symbol);
+      if (legPriceRaw == null || !Number.isFinite(legPriceRaw)) continue;
+      const legPrice = legPriceRaw;
 
-    const filledQty = Number(row.filled_qty);
-    const fallbackQty = Number(row.qty);
-    const qty = Number.isFinite(filledQty) && filledQty > 0
-      ? filledQty
-      : Number.isFinite(fallbackQty) && fallbackQty > 0
-        ? fallbackQty
-        : 1;
+      const filledQty = Number(row.filled_qty);
+      const fallbackQty = Number(row.qty);
+      const qty = Number.isFinite(filledQty) && filledQty > 0
+        ? filledQty
+        : Number.isFinite(fallbackQty) && fallbackQty > 0
+          ? fallbackQty
+          : 1;
 
-    if (String(row.side || '').toLowerCase() === 'sell') {
-      shortNotional += legPrice * qty;
-      shortQty += qty;
-    } else {
-      longNotional += legPrice * qty;
-      longQty += qty;
+      if (String(row.side || '').toLowerCase() === 'sell') {
+        shortNotional += legPrice * qty;
+        shortQty += qty;
+      } else {
+        longNotional += legPrice * qty;
+        longQty += qty;
+      }
+    }
+
+    if (longQty > 0) {
+      const longAvg = longNotional / longQty;
+      const shortAvg = shortQty > 0 ? shortNotional / shortQty : 0;
+      const currentValue = longAvg - shortAvg;
+      if (Number.isFinite(currentValue)) return currentValue;
     }
   }
 
-  if (longQty <= 0) return null;
+  // Fallback for legacy trades without option_trade_orders linkage.
+  if (!trade.symbol || !trade.long_expiry || trade.long_strike == null) return null;
 
-  const longAvg = longNotional / longQty;
-  const shortAvg = shortQty > 0 ? shortNotional / shortQty : 0;
-  const currentValue = longAvg - shortAvg;
+  const longSymbol = buildBrokerOccSymbol(trade.symbol, trade.long_expiry, longType, Number(trade.long_strike)).toUpperCase();
+  const longPrice = priceBySymbol.get(longSymbol);
+  if (longPrice == null || !Number.isFinite(longPrice)) return null;
+
+  let currentValue = longPrice;
+  if (trade.short_expiry && trade.short_strike != null) {
+    const shortSymbol = buildBrokerOccSymbol(trade.symbol, trade.short_expiry, longType, Number(trade.short_strike)).toUpperCase();
+    const shortPrice = priceBySymbol.get(shortSymbol);
+    if (shortPrice != null && Number.isFinite(shortPrice)) {
+      currentValue = longPrice - shortPrice;
+    }
+  }
+
   return Number.isFinite(currentValue) ? currentValue : null;
 }
 

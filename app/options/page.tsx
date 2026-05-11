@@ -1695,14 +1695,15 @@ export default function OptionsPage() {
     void validateExecutableTop30();
   }, [opportunities, dataMode, brokerMode]);
 
-  async function loadPaperTrades(mode: 'initial' | 'refresh' = 'refresh') {
+  async function loadPaperTrades(mode: 'initial' | 'refresh' = 'refresh', forceSync = false) {
     if (mode === 'initial') {
       setPaperTradesLoading(true);
     } else {
       setPaperTradesRefreshing(true);
     }
     try {
-      const res = await fetch('/api/options/paper-trade');
+      const endpoint = forceSync ? '/api/options/paper-trade?forceSync=1' : '/api/options/paper-trade';
+      const res = await fetch(endpoint);
       if (res.ok) {
         const data = await res.json();
         setPaperTrades(data.trades ?? []);
@@ -2184,7 +2185,7 @@ export default function OptionsPage() {
                 loading={paperTradesLoading}
                 refreshing={paperTradesRefreshing}
                 onClose={setCloseTarget}
-                onRefresh={loadPaperTrades}
+                onRefresh={() => loadPaperTrades('refresh', true)}
                 onPickSymbol={setActivePositionSymbol}
                 activeSymbol={activePositionSymbol}
               />
