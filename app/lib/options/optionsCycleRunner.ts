@@ -494,7 +494,7 @@ export async function runOptionsTradeJob(tradeId: string): Promise<TradeJobOutco
     await closeTrade(trade, currentValue, reason);
 
     const pnlLabel = `${currentPnl >= 0 ? '+' : ''}$${currentPnl.toFixed(2)}`;
-    const stratLabel = trade.strategy.replace(/_/g, ' ');
+    const stratLabel = String(trade.strategy || 'option').replace(/_/g, ' ');
 
     await enqueueNotificationEvent({
       userId: trade.user_id,
