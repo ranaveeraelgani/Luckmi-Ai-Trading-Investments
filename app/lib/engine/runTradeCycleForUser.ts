@@ -540,12 +540,35 @@ export async function runTradeCycleForUser({
     }
 
     if (needsBrokerExecution && hasChanges) {
+       let stocksToPersist = updatedStocks;
+
        try {
          const brokerExecution = await executeBrokerTradesForUser({
              userId,
              trades: trades,
          });
          console.log("Broker execution:", brokerExecution);
+
+         const nonExecutedStockIds = new Set(
+           [
+             ...(brokerExecution?.skippedTrades || []),
+             ...(brokerExecution?.failedTrades || []),
+           ]
+             .map((item: any) => item?.trade?.auto_stock_id || item?.trade?.autoStockId)
+             .filter(Boolean)
+         );
+
+         if (nonExecutedStockIds.size > 0) {
+           const originalById = new Map(
+             (eligibleStocks || []).map((stock: any) => [String(stock.id), stock])
+           );
+
+           stocksToPersist = updatedStocks.map((stock: any) => {
+             const stockId = String(stock?.id || "");
+             if (!stockId || !nonExecutedStockIds.has(stockId)) return stock;
+             return originalById.get(stockId) || stock;
+           });
+         }
        } catch (brokerErr) {
          console.error('[engine] broker execution failed — saving engine state anyway', brokerErr);
        }
@@ -553,7 +576,7 @@ export async function runTradeCycleForUser({
        await saveEngineStateOnly({
            supabase,
            userId,
-           updatedStocks: updatedStocks,
+           updatedStocks: stocksToPersist,
        });
 
        await clearPendingAutoJobIfManual();

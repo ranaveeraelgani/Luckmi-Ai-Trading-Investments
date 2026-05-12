@@ -1,6 +1,7 @@
 import { placeAutoBrokerOrder } from "@/app/lib/broker/placeAutoBrokerOrder";
 import { checkBrokerAccountCanTrade } from "./checkBrokerAccountCanTrade";
 import { createNotificationService } from '@/app/lib/notifications/service';
+import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 
 type BrokerSide = "buy" | "sell";
 
@@ -20,6 +21,58 @@ type EngineTrade = {
   cts_score?: number;
   sell_score?: number;
 };
+
+const OPEN_ORDER_STATUSES = [
+  "new",
+  "accepted",
+  "pending_new",
+  "partially_filled",
+  "held",
+  "pending_cancel",
+  "pending_replace",
+];
+
+async function hasOpenBrokerOrderForStock(params: {
+  userId: string;
+  autoStockId: string;
+  side: BrokerSide;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("broker_orders")
+    .select("id")
+    .eq("user_id", params.userId)
+    .eq("auto_stock_id", params.autoStockId)
+    .eq("side", params.side)
+    .in("status", OPEN_ORDER_STATUSES)
+    .limit(1);
+
+  if (error) {
+    console.warn("Failed to check pending broker orders:", error.message);
+    return false;
+  }
+
+  return Boolean(data && data.length > 0);
+}
+
+async function getTrackedSharesForStock(params: {
+  userId: string;
+  autoStockId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("positions")
+    .select("shares")
+    .eq("user_id", params.userId)
+    .eq("auto_stock_id", params.autoStockId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Failed to read tracked shares for sell guard:", error.message);
+    return 0;
+  }
+
+  const shares = Number(data?.shares);
+  return Number.isFinite(shares) ? Math.max(0, shares) : 0;
+}
 
 function normalizeTradeType(type?: string) {
   return String(type || "").trim().toLowerCase();
@@ -150,12 +203,60 @@ export async function executeBrokerTradesForUser({
               reason: guard.reason,
             };
           }
+
+      let orderQty = validated.shares;
+
+      if (validated.side === "sell") {
+        const hasPendingSell = await hasOpenBrokerOrderForStock({
+          userId,
+          autoStockId: validated.autoStockId,
+          side: "sell",
+        });
+
+        if (hasPendingSell) {
+          skippedTrades.push({
+            trade,
+            reason: "Pending sell order already exists for this stock",
+          });
+
+          console.warn("Skipping duplicate sell while broker sell is pending", {
+            userId,
+            autoStockId: validated.autoStockId,
+            symbol: validated.symbol,
+          });
+
+          continue;
+        }
+
+        const trackedShares = await getTrackedSharesForStock({
+          userId,
+          autoStockId: validated.autoStockId,
+        });
+
+        if (trackedShares <= 0) {
+          skippedTrades.push({
+            trade,
+            reason: "No tracked open shares available to sell",
+          });
+
+          console.warn("Skipping sell because tracked shares are zero", {
+            userId,
+            autoStockId: validated.autoStockId,
+            symbol: validated.symbol,
+          });
+
+          continue;
+        }
+
+        orderQty = Math.min(validated.shares, trackedShares);
+      }
+
       const order = await placeAutoBrokerOrder({
         userId,
         autoStockId: validated.autoStockId,
         symbol: validated.symbol,
         side: validated.side,
-        qty: validated.shares,
+        qty: orderQty,
         appTradeType: trade.type,
         appTradeLabel: getAppTradeLabel(trade.type),
         tradeIntent: {
@@ -164,7 +265,7 @@ export async function executeBrokerTradesForUser({
           appTradeType: trade.type,
           appTradeLabel: getAppTradeLabel(trade.type),
           symbol: validated.symbol,
-          shares: validated.shares,
+          shares: orderQty,
           expectedPrice: trade.price ?? null,
           expectedAmount: trade.amount ?? null,
           reason: trade.reason ?? null,
