@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopNav from "@/components/TopNav";
 import AddPositionModal from "@/components/portfolio/AddPositionModal";
+import LuckmiAiIcon from "@/components/brand/LuckmiAiIcon";
 
 type Mode = "personal" | "auto";
 
@@ -55,6 +56,32 @@ function formatPercent(value?: number | string | null) {
   if (!Number.isFinite(num)) return "--";
   const sign = num > 0 ? "+" : "";
   return `${sign}${num.toFixed(2)}%`;
+}
+
+function pnlClass(value?: number | null) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "text-gray-400";
+  if (num > 0) return "text-emerald-300";
+  if (num < 0) return "text-red-300";
+  return "text-white";
+}
+
+function aiActionPillClass(action?: string | null) {
+  const normalized = String(action || "").toLowerCase();
+
+  if (normalized.includes("buy")) {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  }
+
+  if (normalized.includes("sell") || normalized.includes("exit")) {
+    return "border-red-500/30 bg-red-500/10 text-red-300";
+  }
+
+  if (normalized.includes("hold") || normalized.includes("wait")) {
+    return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  }
+
+  return "border-[#F5C76E]/30 bg-[#F5C76E]/10 text-[#F5C76E]";
 }
 
 export default function PortfolioPage() {
@@ -311,6 +338,8 @@ export default function PortfolioPage() {
                   : Number.isFinite(currentPrice) && shares && avgPrice
                   ? (currentPrice - avgPrice) * shares
                   : null;
+              const isAutoStockRow = mode === "auto" && !isOptionRow;
+              const decisionAction = item.lastAiDecision?.action || "No signal";
               const isExpanded = expandedSymbol === item.symbol;
 
               return (
@@ -334,6 +363,11 @@ export default function PortfolioPage() {
                             ? `${contracts || "—"} contract${contracts === 1 ? "" : "s"} · Debit ${formatMoney(avgPrice || null)}`
                             : `${shares || "—"} shares · Avg ${formatMoney(avgPrice || null)}`}
                         </div>
+                        {isAutoStockRow ? (
+                          <div className={`mt-1 text-xs font-medium ${pnlClass(pnl)}`}>
+                            In Position P&amp;L {formatMoney(pnl)}
+                          </div>
+                        ) : null}
                         {isOptionRow && item.strategy ? (
                           <div className="mt-1 text-xs text-gray-500">
                             {item.strategy.replace(/_/g, " ")}
@@ -356,6 +390,11 @@ export default function PortfolioPage() {
                         >
                           {formatPercent(changePercent)}
                         </div>
+                        {mode === "auto" ? (
+                          <div className={`mt-1 text-xs font-medium ${pnlClass(pnl)}`}>
+                            P&amp;L {formatMoney(pnl)}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -404,33 +443,36 @@ export default function PortfolioPage() {
 
                       <div className="rounded-2xl bg-[#1a1f2e] p-3">
                         <div className="text-xs text-gray-400">Unrealized P/L</div>
-                        <div
-                          className={`mt-1 font-medium ${
-                            (pnl ?? 0) > 0
-                              ? "text-emerald-300"
-                              : (pnl ?? 0) < 0
-                              ? "text-red-300"
-                              : "text-white"
-                          }`}
-                        >
+                        <div className={`mt-1 font-medium ${pnlClass(pnl)}`}>
                           {formatMoney(pnl)}
                         </div>
                       </div>
 
                       {mode === "auto" ? (
-                        <div className="rounded-2xl bg-[#1a1f2e] p-3">
-                          <div className="text-xs text-gray-400">AI Decision</div>
-                          <div className="mt-1 font-medium text-white">
-                            {item.lastAiDecision?.action || "—"}
+                        <div className="rounded-2xl border border-[#F5C76E]/20 bg-gradient-to-br from-[#F5C76E]/10 to-[#F5C76E]/[0.02] p-3">
+                          <div className="flex items-center gap-2">
+                            <LuckmiAiIcon size={14} />
+                            <div className="text-xs font-medium text-[#F5C76E]">Luckmi AI Decision</div>
                           </div>
-                          <div className="mt-1 text-xs text-gray-500">
-                            Confidence {item.lastAiDecision?.confidence ?? "—"}%
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${aiActionPillClass(
+                                item.lastAiDecision?.action,
+                              )}`}
+                            >
+                              {decisionAction}
+                            </span>
+                            {item.lastAiDecision?.confidence != null ? (
+                              <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-gray-300">
+                                {item.lastAiDecision.confidence}% confidence
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       ) : null}
 
                       {mode === "auto" && item.lastAiDecision?.reason ? (
-                        <div className="rounded-2xl bg-[#1a1f2e] p-3 sm:col-span-3">
+                        <div className="rounded-2xl border border-[#F5C76E]/15 bg-[#161b24] p-3 sm:col-span-3">
                           <div className="text-xs text-gray-400">Last AI Analysis</div>
                           <div className="mt-1 text-sm text-gray-300">
                             {item.lastAiDecision.reason}

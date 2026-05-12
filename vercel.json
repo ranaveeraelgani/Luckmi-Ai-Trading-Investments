@@ -15,6 +15,9 @@
 		,
 		"app/api/cron/options-order-runs-drain/route.ts": {
 			"maxDuration": 60
+		},
+		"app/api/options/run-cycle-user/route.ts": {
+			"maxDuration": 60
 		}
 	}
 }

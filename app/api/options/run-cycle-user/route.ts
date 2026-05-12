@@ -54,10 +54,27 @@ export async function GET(req: Request) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const allTradeIds = await fetchAllTradeIdsForUser(user.id);
+  let allTradeIds: string[];
+  try {
+    allTradeIds = await fetchAllTradeIdsForUser(user.id);
+  } catch (err: any) {
+    return Response.json({ success: false, error: err?.message ?? 'Failed to fetch trade ids' }, { status: 500 });
+  }
 
-  if (!(await isMarketOpenNowLive())) {
-    const fills = await reconcileOptionBrokerFills(20, allTradeIds);
+  let marketOpen: boolean;
+  try {
+    marketOpen = await isMarketOpenNowLive();
+  } catch {
+    marketOpen = false;
+  }
+
+  if (!marketOpen) {
+    let fills: Awaited<ReturnType<typeof reconcileOptionBrokerFills>>;
+    try {
+      fills = await reconcileOptionBrokerFills(20, allTradeIds);
+    } catch {
+      fills = { filled: 0, processed: 0 } as any;
+    }
 
     return Response.json(
       {
@@ -112,7 +129,12 @@ export async function GET(req: Request) {
     entrySkipReason = entryErr?.message ?? 'manual entry stage failed';
   }
 
-  const openTradeIds = await fetchOpenTradeIdsForUser(user.id);
+  let openTradeIds: string[] = [];
+  try {
+    openTradeIds = await fetchOpenTradeIdsForUser(user.id);
+  } catch (err: any) {
+    return Response.json({ success: false, error: err?.message ?? 'Failed to fetch open trades' }, { status: 500 });
+  }
 
   let closed = 0;
   let closeRequested = 0;
@@ -121,29 +143,45 @@ export async function GET(req: Request) {
   let skipped = 0;
 
   for (const tradeId of openTradeIds) {
-    const outcome = await runOptionsTradeJob(tradeId);
+    try {
+      const outcome = await runOptionsTradeJob(tradeId);
 
-    switch (outcome.action) {
-      case 'closed':
-        closed++;
-        break;
-      case 'close_requested':
-        closeRequested++;
-        break;
-      case 'peak_updated':
-        peakUpdated++;
-        break;
-      case 'price_unavailable':
-        priceUnavailable++;
-        break;
-      case 'skipped':
-        skipped++;
-        break;
+      switch (outcome.action) {
+        case 'closed':
+          closed++;
+          break;
+        case 'close_requested':
+          closeRequested++;
+          break;
+        case 'peak_updated':
+          peakUpdated++;
+          break;
+        case 'price_unavailable':
+          priceUnavailable++;
+          break;
+        case 'skipped':
+          skipped++;
+          break;
+      }
+    } catch {
+      skipped++;
     }
   }
 
-  const exits = await submitPendingOptionExits(10, allTradeIds);
-  const fills = await reconcileOptionBrokerFills(20, allTradeIds);
+  let exits: Awaited<ReturnType<typeof submitPendingOptionExits>>;
+  let fills: Awaited<ReturnType<typeof reconcileOptionBrokerFills>>;
+
+  try {
+    exits = await submitPendingOptionExits(10, allTradeIds);
+  } catch {
+    exits = { submitted: 0, skipped: 0, failed: 0 } as any;
+  }
+
+  try {
+    fills = await reconcileOptionBrokerFills(20, allTradeIds);
+  } catch {
+    fills = { filled: 0, processed: 0 } as any;
+  }
 
   return Response.json({
     success: true,

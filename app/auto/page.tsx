@@ -242,7 +242,7 @@ function MiniMetric({
   return (
     <div className="rounded-2xl border border-white/5 bg-[#1A1F2B] px-3 py-3">
       <div className="text-[10px] uppercase tracking-wide text-gray-500">{label}</div>
-      <div className={`mt-1 text-sm font-semibold text-white sm:text-base ${valueClassName}`}>
+      <div className={`mt-1 text-sm font-semibold sm:text-base ${valueClassName || "text-white"}`}>
         {value}
       </div>
     </div>
