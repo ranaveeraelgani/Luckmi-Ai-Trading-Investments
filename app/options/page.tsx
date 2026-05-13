@@ -453,7 +453,13 @@ function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
             <Pill className={directionClass(trade.direction as OptionDirection)}>
               {trade.direction === 'bullish' ? '▲' : '▼'} {trade.direction}
             </Pill>
-            {ai?.action && (
+            <Pill className={isClosed
+              ? 'border-gray-500/30 bg-gray-500/10 text-gray-300'
+              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}
+            >
+              {isClosed ? 'CLOSED' : 'IN POSITION'}
+            </Pill>
+            {!isClosed && ai?.action && (
               <Pill className={aiActionBadge(ai.action) ?? ''}>AI: {ai.action}</Pill>
             )}
             {isClosed && hasPnl && (
@@ -468,6 +474,8 @@ function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
           <div className="text-[10px] text-gray-500 mt-0.5 truncate">
             {strategyLabel(trade.strategy as StrategyFamily)} · debit {fmt$(trade.net_debit)}
             {trade.long_strike != null && trade.short_strike != null && ` · $${trade.long_strike}/$${trade.short_strike}`}
+            {` · entry ${new Date(trade.entry_at).toLocaleDateString()}`}
+            {trade.exit_at ? ` · exit ${new Date(trade.exit_at).toLocaleDateString()}` : ''}
           </div>
         </div>
         <span className="text-gray-600 text-xs shrink-0">{open ? '▲' : '▼'}</span>
@@ -530,9 +538,11 @@ function OptionsHistoryDrawer({
   trades: PaperTrade[];
   onClose: () => void;
 }) {
-  // Group trades by entry date (local date string)
+  // Group by exit date for closed trades so recent exits appear under "today".
+  // Open trades continue to use entry date.
   const byDay = trades.reduce<Record<string, PaperTrade[]>>((acc, t) => {
-    const day = new Date(t.entry_at).toLocaleDateString(undefined, {
+    const anchorTs = t.status === 'closed' && t.exit_at ? t.exit_at : t.entry_at;
+    const day = new Date(anchorTs).toLocaleDateString(undefined, {
       weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
     });
     (acc[day] = acc[day] ?? []).push(t);
@@ -983,9 +993,9 @@ function PaperTradesPanel({
           .filter(t => activeSymbol == null || t.symbol.toUpperCase() === activeSymbol)
           .map(t => <PaperTradeRow key={t.id} trade={t} onClose={onClose} />)}
         {closed.length > 0 && (
-          <details>
+          <details open>
             <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300 transition select-none py-1">
-              {closed.length} closed trade{closed.length > 1 ? "s" : ""} ▸
+              {closed.length} closed trade{closed.length > 1 ? "s" : ""}
             </summary>
             <div className="mt-2 space-y-2">
               {closed.map(t => <PaperTradeRow key={t.id} trade={t} />)}

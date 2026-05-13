@@ -167,7 +167,7 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
     // Fetch net_debit from the trade to compute final P&L
     const { data: trade } = await supabaseAdmin
       .from('option_paper_trades')
-      .select('net_debit, auto_exit_reason, user_id, symbol, strategy, direction, execution_mode_snapshot, created_at')
+      .select('net_debit, auto_exit_reason, user_id, symbol, strategy, direction, execution_mode_snapshot, entry_at')
       .eq('id', row.trade_id)
       .maybeSingle();
 
@@ -193,7 +193,7 @@ async function reconcileOrder(row: UnfilledOrderRow): Promise<'filled' | 'still_
       direction:     trade.direction ?? null,
       rawExitReason: exitReason,
       exitAt:        new Date().toISOString(),
-      entryAt:       trade.created_at ?? null,
+      entryAt:       trade.entry_at ?? null,
       netDebit:      Number(trade.net_debit),
       pnl,
       executionMode: trade.execution_mode_snapshot ?? null,

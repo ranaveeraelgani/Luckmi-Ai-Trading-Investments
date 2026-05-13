@@ -61,7 +61,7 @@ interface OpenTrade {
   broker_status: string | null;
   entry_broker_order_id: string | null;
   exit_broker_order_id: string | null;
-  created_at: string | null;
+  entry_at: string | null;
 }
 
 interface UserPrefs {
@@ -197,7 +197,7 @@ async function fetchTradeById(tradeId: string): Promise<OpenTrade | null> {
       'id, user_id, symbol, strategy, option_type, direction, ' +
       'long_strike, long_expiry, short_strike, short_expiry, ' +
       'net_debit, max_gain, max_loss, peak_pnl, qty_contracts, execution_mode_snapshot, ' +
-      'broker_status, entry_broker_order_id, exit_broker_order_id, created_at',
+      'broker_status, entry_broker_order_id, exit_broker_order_id, entry_at',
     )
     .eq('id', tradeId)
     .eq('status', 'open')
@@ -250,7 +250,7 @@ async function closeTrade(
     direction:     trade.direction,
     rawExitReason: exitReason,
     exitAt,
-    entryAt:       trade.created_at ?? null,
+    entryAt:       trade.entry_at ?? null,
     netDebit:      trade.net_debit,
     pnl,
     executionMode: trade.execution_mode_snapshot,

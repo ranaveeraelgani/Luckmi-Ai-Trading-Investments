@@ -44,6 +44,51 @@ async function fetchAllTradeIdsForUser(userId: string): Promise<string[]> {
   return (data ?? []).map((row: any) => row.id as string);
 }
 
+async function fetchRecentExitRunDiagnostics(userId: string, tradeIds: string[]) {
+  if (tradeIds.length === 0) {
+    return { failedExitRuns: [], pendingExitRuns: [] };
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('option_order_runs')
+    .select('id, trade_id, status, error_message, created_at, updated_at, broker_order_id, reason')
+    .eq('user_id', userId)
+    .eq('action', 'close')
+    .in('trade_id', tradeIds)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error || !data) {
+    return { failedExitRuns: [], pendingExitRuns: [] };
+  }
+
+  const failedExitRuns = data
+    .filter((r: any) => r.status === 'failed')
+    .map((r: any) => ({
+      runId: r.id,
+      tradeId: r.trade_id,
+      status: r.status,
+      reason: r.reason ?? null,
+      error: r.error_message ?? 'unknown error',
+      createdAt: r.created_at ?? null,
+      updatedAt: r.updated_at ?? null,
+    }));
+
+  const pendingExitRuns = data
+    .filter((r: any) => r.status === 'pending_submission' || r.status === 'submitted')
+    .map((r: any) => ({
+      runId: r.id,
+      tradeId: r.trade_id,
+      status: r.status,
+      reason: r.reason ?? null,
+      brokerOrderId: r.broker_order_id ?? null,
+      createdAt: r.created_at ?? null,
+      updatedAt: r.updated_at ?? null,
+    }));
+
+  return { failedExitRuns, pendingExitRuns };
+}
+
 export async function GET(req: Request) {
   const supabase = await createClient();
   const {
@@ -141,10 +186,27 @@ export async function GET(req: Request) {
   let peakUpdated = 0;
   let priceUnavailable = 0;
   let skipped = 0;
+  const tradeOutcomes: Array<{
+    tradeId: string;
+    action: 'closed' | 'close_requested' | 'peak_updated' | 'price_unavailable' | 'skipped';
+    reason?: string;
+    exitReason?: string;
+    mode?: 'paper' | 'live';
+  }> = [];
 
   for (const tradeId of openTradeIds) {
     try {
       const outcome = await runOptionsTradeJob(tradeId);
+      tradeOutcomes.push({
+        tradeId,
+        action: outcome.action,
+        reason: outcome.action === 'skipped' ? outcome.reason : undefined,
+        exitReason:
+          outcome.action === 'closed' || outcome.action === 'close_requested'
+            ? outcome.exitReason
+            : undefined,
+        mode: outcome.action === 'close_requested' ? outcome.mode : undefined,
+      });
 
       switch (outcome.action) {
         case 'closed':
@@ -163,8 +225,13 @@ export async function GET(req: Request) {
           skipped++;
           break;
       }
-    } catch {
+    } catch (err: any) {
       skipped++;
+      tradeOutcomes.push({
+        tradeId,
+        action: 'skipped',
+        reason: err?.message ?? 'runOptionsTradeJob failed',
+      });
     }
   }
 
@@ -183,6 +250,8 @@ export async function GET(req: Request) {
     fills = { filled: 0, processed: 0 } as any;
   }
 
+  const exitDiagnostics = await fetchRecentExitRunDiagnostics(user.id, allTradeIds);
+
   return Response.json({
     success: true,
     processed: openTradeIds.length,
@@ -197,5 +266,7 @@ export async function GET(req: Request) {
     entrySkipReason,
     exits,
     fills,
+    tradeOutcomes,
+    exitDiagnostics,
   });
 }
