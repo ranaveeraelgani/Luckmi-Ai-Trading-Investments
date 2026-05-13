@@ -33,6 +33,84 @@ export type ExecuteOptionEntriesResult = {
   skippedReason?: string;
 };
 
+async function recordEntryDeclinedInsufficientFunds(params: {
+  userId: string;
+  opportunity: OptionsOpportunity;
+  executionMode: 'paper' | 'live';
+  availableBuyingPower: number;
+  requiredCost: number;
+}) {
+  const nowIso = new Date().toISOString();
+  const symbol = params.opportunity.symbol.toUpperCase();
+  const reason = `Auto-entry skipped: insufficient options buying power. Required $${params.requiredCost.toFixed(2)}, available $${params.availableBuyingPower.toFixed(2)}.`;
+
+  const { data: existing } = await supabaseAdmin
+    .from('option_paper_trades')
+    .select('id')
+    .eq('user_id', params.userId)
+    .eq('symbol', symbol)
+    .eq('status', 'closed')
+    .eq('broker_status', 'entry_skipped_insufficient_funds')
+    .gte('exit_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.id) return;
+
+  const { data: tradeRow, error: tradeError } = await supabaseAdmin
+    .from('option_paper_trades')
+    .insert({
+      user_id: params.userId,
+      symbol,
+      direction: params.opportunity.direction,
+      strategy: params.opportunity.strategy,
+      long_strike: params.opportunity.longLeg.strike,
+      long_expiry: params.opportunity.longLeg.expiry,
+      short_strike: params.opportunity.shortLeg?.strike ?? null,
+      short_expiry: params.opportunity.shortLeg?.expiry ?? null,
+      option_type: params.opportunity.longLeg.optionType,
+      net_debit: params.opportunity.netDebit,
+      max_gain: params.opportunity.maxGain ?? null,
+      max_loss: params.opportunity.maxLoss ?? null,
+      entry_score: params.opportunity.score.finalScore,
+      entry_spot_price: null,
+      qty_contracts: 1,
+      execution_mode_snapshot: params.executionMode,
+      broker_status: 'entry_skipped_insufficient_funds',
+      status: 'closed',
+      entry_at: nowIso,
+      exit_at: nowIso,
+      notes: reason,
+    })
+    .select('id')
+    .single();
+
+  if (tradeError || !tradeRow?.id) {
+    console.warn(`[options-auto-entry] failed to record insufficient-funds decline for ${symbol}: ${tradeError?.message ?? 'unknown error'}`);
+    return;
+  }
+
+  if (params.opportunity.aiAction) {
+    try {
+      await supabaseAdmin.from('ai_decisions').insert({
+        user_id: params.userId,
+        symbol,
+        action: params.opportunity.aiAction,
+        reason: params.opportunity.aiReason ?? null,
+        confidence: params.opportunity.aiConfidence ?? null,
+        option_trade_id: tradeRow.id,
+        option_strategy: params.opportunity.strategy,
+        option_direction: params.opportunity.direction,
+        ocs_score: params.opportunity.score.finalScore,
+        risk_flags: params.opportunity.aiRiskFlags?.length ? params.opportunity.aiRiskFlags : null,
+        created_at: nowIso,
+      });
+    } catch (err: any) {
+      console.warn(`[options-auto-entry] failed to attach ai_decision to declined entry ${symbol}: ${err?.message ?? err}`);
+    }
+  }
+}
+
 function buildOccSymbol(underlying: string, expiry: string, optionType: 'call' | 'put', strike: number): string {
   const d = expiry.replace(/-/g, '');
   const ymd = d.length === 8 ? d.slice(2) : d;
@@ -203,10 +281,24 @@ export async function executeOptionEntriesForUser(
 
   let placed = 0;
   const placedSymbolsThisCycle = new Set<string>();
+  let remainingBuyingPower = buyingPower;
+  const hasTrackedBuyingPower = Number.isFinite(buyingPower) && buyingPower > 0;
 
   for (const item of executableEligible) {
     const opp = item.opp;
     if (placedSymbolsThisCycle.has(opp.symbol.toUpperCase())) continue;
+
+    const requiredCost = opp.netDebit * 100;
+    if (hasTrackedBuyingPower && requiredCost > remainingBuyingPower) {
+      await recordEntryDeclinedInsufficientFunds({
+        userId,
+        opportunity: opp,
+        executionMode: credentials.isPaper ? 'paper' : 'live',
+        availableBuyingPower: remainingBuyingPower,
+        requiredCost,
+      });
+      continue;
+    }
 
     try {
       const result = await placeOptionsBrokerEntry({
@@ -237,6 +329,9 @@ export async function executeOptionEntriesForUser(
       if (result.ok) {
         placed++;
         placedSymbolsThisCycle.add(opp.symbol.toUpperCase());
+        if (hasTrackedBuyingPower) {
+          remainingBuyingPower = Math.max(0, remainingBuyingPower - requiredCost);
+        }
       }
     } catch {
       // non-fatal: continue trying remaining opportunities

@@ -414,6 +414,8 @@ type PaperTrade = {
   peak_pnl?: number | null;
   qty_contracts?: number | null;
   broker_entry_price?: number | null;
+  broker_status?: string | null;
+  execution_mode_snapshot?: string | null;
   notes: string | null;
   ai_decision?: AiDecisionRecord | null;
 };
@@ -432,6 +434,7 @@ function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
   const ai = trade.ai_decision;
   const isClosed = trade.status === 'closed';
   const hasPnl = trade.pnl != null;
+  const insufficientFunds = trade.broker_status === 'entry_skipped_insufficient_funds';
 
   return (
     <div className="rounded-2xl border border-white/5 bg-[#1A1F2B] overflow-hidden">
@@ -459,6 +462,11 @@ function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
             >
               {isClosed ? 'CLOSED' : 'IN POSITION'}
             </Pill>
+            {insufficientFunds && (
+              <Pill className="border-red-500/30 bg-red-500/10 text-red-300">
+                INSUFFICIENT FUNDS
+              </Pill>
+            )}
             {!isClosed && ai?.action && (
               <Pill className={aiActionBadge(ai.action) ?? ''}>AI: {ai.action}</Pill>
             )}
@@ -502,6 +510,11 @@ function HistoryTradeRow({ trade }: { trade: PaperTrade }) {
             <span>Entry {new Date(trade.entry_at).toLocaleString()}</span>
             {trade.exit_at && <span>Exit {new Date(trade.exit_at).toLocaleString()}</span>}
           </div>
+          {trade.notes && (
+            <div className="rounded-xl border border-red-500/10 bg-[#11151C] px-3 py-2 text-[11px] text-red-300">
+              {trade.notes}
+            </div>
+          )}
           {/* AI reason */}
           {ai?.reason && (
             <div className="rounded-xl border border-[#F5C76E]/10 bg-[#11151C] px-3 py-2 space-y-1">

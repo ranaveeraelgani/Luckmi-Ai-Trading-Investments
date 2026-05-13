@@ -31,6 +31,12 @@ import { enqueueOptionsCycleJobs } from '@/app/lib/engine/jobQueue';
 const JOB_NAME = 'options-cycle';
 export const maxDuration = 60;
 
+function getOrigin(req: Request): string {
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'localhost:3000';
+  const proto = req.headers.get('x-forwarded-proto') ?? 'http';
+  return `${proto}://${host}`;
+}
+
 export async function GET(req: Request) {
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
@@ -80,6 +86,18 @@ export async function GET(req: Request) {
       `[cron:${JOB_NAME}] enqueue complete elapsedMs=${elapsed()} ` +
         `enqueued=${result.tradesEnqueued} skipped=${result.tradesSkippedAlreadyQueued}`,
     );
+
+    // Best-effort warm of the options opportunities cache so the follow-up
+    // auto-entry cron can use a cached live_strict snapshot without depending
+    // on a user opening the options page first.
+    try {
+      await fetch(`${getOrigin(req)}/api/options/opportunities?require_cached=1`, {
+        headers: { 'x-internal-cron': 'true' },
+        cache: 'no-store',
+      });
+    } catch (err: any) {
+      console.warn(`[cron:${JOB_NAME}] opportunities cache warm failed: ${err?.message ?? err}`);
+    }
 
     if (runId) {
       await finishCronRun({
