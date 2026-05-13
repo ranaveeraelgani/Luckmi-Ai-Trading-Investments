@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import TopNav from "@/components/TopNav";
 import LuckmiAiIcon from "@/components/brand/LuckmiAiIcon";
+import BrokerStatusCard from "@/components/broker/BrokerStatusCard";
 import { toast } from "sonner";
 import type {
   OptionsOpportunity,
@@ -1006,9 +1007,9 @@ function PaperTradesPanel({
           .filter(t => activeSymbol == null || t.symbol.toUpperCase() === activeSymbol)
           .map(t => <PaperTradeRow key={t.id} trade={t} onClose={onClose} />)}
         {closed.length > 0 && (
-          <details open>
+          <details>
             <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300 transition select-none py-1">
-              {closed.length} closed trade{closed.length > 1 ? "s" : ""}
+              {closed.length} closed trade{closed.length > 1 ? "s" : ""} ▸
             </summary>
             <div className="mt-2 space-y-2">
               {closed.map(t => <PaperTradeRow key={t.id} trade={t} />)}
@@ -2080,6 +2081,15 @@ export default function OptionsPage() {
               </>
             )}
           </div>
+
+          <BrokerStatusCard
+            onSynced={async () => {
+              await Promise.all([
+                loadPaperTrades('refresh', true),
+                load(),
+              ]);
+            }}
+          />
 
           {/* Filter Panel */}
           {showFilters && (

@@ -18,7 +18,11 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
-export default function BrokerStatusCard() {
+export default function BrokerStatusCard({
+  onSynced,
+}: {
+  onSynced?: () => void | Promise<void>;
+}) {
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -82,7 +86,12 @@ export default function BrokerStatusCard() {
 
               <div className="flex items-center gap-2">
                 {!collapsed && <span className="text-xs text-gray-500">▲</span>}
-                <SyncAlpacaButton onSynced={loadStatus} />
+                <SyncAlpacaButton
+                  onSynced={async () => {
+                    await loadStatus();
+                    await onSynced?.();
+                  }}
+                />
               </div>
           </div>
 
