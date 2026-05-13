@@ -23,6 +23,15 @@ type UniverseResponse = {
   };
 };
 
+type DashboardStats = {
+  universeCount: number;
+  evaluatedCount: number;
+  successfulCount: number;
+  passedCount: number;
+  filteredOutCount: number;
+  failedCount: number;
+};
+
 type DashboardRow = {
   symbol: string;
   ctsScore: number;
@@ -77,8 +86,8 @@ export async function GET(req: NextRequest) {
       1,
       Math.min(parseIntParam(req.nextUrl.searchParams.get('limit'), 20), maxSymbols),
     );
-    const minCts = parseNumParam(req.nextUrl.searchParams.get('minCts'), 50);
-    const minSms = parseNumParam(req.nextUrl.searchParams.get('minSms'), 60);
+    const minCts = parseNumParam(req.nextUrl.searchParams.get('minCts'), 45);
+    const minSms = parseNumParam(req.nextUrl.searchParams.get('minSms'), 35);
     const tierFilter = parseTier(req.nextUrl.searchParams.get('tier'));
 
     const baseUrl = getBaseUrl().replace(/\/$/, '');
@@ -107,7 +116,11 @@ export async function GET(req: NextRequest) {
       usedUniverseFallback = true;
     }
 
-    const symbols = (Array.isArray(universe.symbols) ? universe.symbols : DEFAULT_FALLBACK_UNIVERSE)
+    const universeSymbols = Array.isArray(universe.symbols)
+      ? universe.symbols
+      : DEFAULT_FALLBACK_UNIVERSE;
+
+    const symbols = universeSymbols
       .map((symbol) => String(symbol || '').trim().toUpperCase())
       .filter(Boolean)
       .slice(0, limit);
@@ -161,17 +174,25 @@ export async function GET(req: NextRequest) {
       }),
     );
 
-    const rows = settled
-      .filter(
-        (item): item is PromiseFulfilledResult<DashboardRow> =>
-          item.status === 'fulfilled',
-      )
-      .map((item) => item.value)
+    const fulfilledRows = settled
+      .filter((item): item is PromiseFulfilledResult<DashboardRow> => item.status === 'fulfilled')
+      .map((item) => item.value);
+
+    const rows = fulfilledRows
       .filter((row) => row.ctsScore >= minCts && row.smartMoneyScore >= minSms)
       .filter((row) => (tierFilter ? row.tier === tierFilter : true))
       .sort((a, b) => b.finalConviction - a.finalConviction);
 
-    const partialFailures = settled.length - rows.length;
+    const failedCount = settled.length - fulfilledRows.length;
+    const filteredOutCount = fulfilledRows.length - rows.length;
+    const stats: DashboardStats = {
+      universeCount: universeSymbols.length,
+      evaluatedCount: symbols.length,
+      successfulCount: fulfilledRows.length,
+      passedCount: rows.length,
+      filteredOutCount,
+      failedCount,
+    };
 
     const tierCounts = rows.reduce(
       (acc, row) => {
@@ -200,7 +221,8 @@ export async function GET(req: NextRequest) {
         },
       },
       cachePolicy,
-      partialFailures,
+      partialFailures: failedCount,
+      stats,
       warning: usedUniverseFallback
         ? 'Using fallback universe due to upstream discovery issue.'
         : null,

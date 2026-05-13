@@ -225,7 +225,7 @@ export function calculateSmartMoneyScore(
   const structureScore = calculateStructureScore(input.ctsScore, input.alignment);
   const volatilityScore = calculateVolatilityScore(input.iv);
 
-  const hasFlow = Array.isArray(input.flow);
+  const hasFlow = Array.isArray(input.flow) && input.flow.length > 0;
   const hasGex = Boolean(input.gex);
   const hasIv = Boolean(input.iv);
   const hasNetPremium = Boolean(input.netPremium);
@@ -255,6 +255,7 @@ export function calculateSmartMoneyScore(
   const activeSourceCount = [
     active.optionsFlow,
     active.darkPoolProxy,
+    active.structure,
     active.volatility,
   ].filter(Boolean).length;
 

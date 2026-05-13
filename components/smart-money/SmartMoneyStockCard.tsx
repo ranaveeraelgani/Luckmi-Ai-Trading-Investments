@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import type { SmartMoneyDashboardItem } from '@/components/smart-money/types';
+import { getTierLabel, getTierSubLabel } from '@/components/smart-money/tierLabels';
+import LuckmiAiIcon from '@/components/brand/LuckmiAiIcon';
 
 type SmartMoneyStockCardProps = {
   item: SmartMoneyDashboardItem;
@@ -27,7 +29,7 @@ export default function SmartMoneyStockCard({ item }: SmartMoneyStockCardProps) 
   const [result, setResult] = useState<string>('');
   const [expanded, setExpanded] = useState(false);
 
-  const actionTier = item.tier === 'tier_1' ? 'Auto Trading Ready' : item.tier === 'tier_2' ? 'Watchlist Candidate' : 'Informational';
+  const actionTier = getTierSubLabel(item.tier);
 
   async function addToWatchlist() {
     try {
@@ -95,11 +97,16 @@ export default function SmartMoneyStockCard({ item }: SmartMoneyStockCardProps) 
     <article className="rounded-3xl border border-white/5 bg-[#11151C] p-4 shadow-[0_0_25px_rgba(21,173,255,0.05)]">
       <div className="mb-3 flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-xl font-semibold text-white">{item.symbol}</h3>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded">
+              <LuckmiAiIcon />
+            </span>
+            <h3 className="text-xl font-semibold text-white">{item.symbol}</h3>
+          </div>
           <p className="text-xs text-gray-400">{new Date(item.generatedAt).toLocaleTimeString()}</p>
         </div>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${tierClass(item.tier)}`}>
-          {item.tier.replace('_', ' ').toUpperCase()}
+          {getTierLabel(item.tier)}
         </span>
       </div>
 
@@ -135,7 +142,7 @@ export default function SmartMoneyStockCard({ item }: SmartMoneyStockCardProps) 
       </div>
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-[#1A1F2B] p-3 text-xs text-gray-300">
-        <div className="mb-1 font-medium text-white">AI Narrative</div>
+        <div className="mb-1 font-medium text-white">AI Analysis</div>
         <p>
           {item.aiNarrative || 'Narrative is still loading. Signal summary is available above.'}
         </p>

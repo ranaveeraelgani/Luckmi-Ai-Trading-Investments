@@ -54,5 +54,24 @@ export type SmartMoneyDashboardResponse = {
     tier_2: number;
     tier_3: number;
   };
+  universe?: {
+    source?: string;
+    generatedAt?: string | null;
+    cachePolicy?: {
+      phase?: string;
+      ttlSeconds?: number;
+      label?: string;
+    };
+  };
+  partialFailures?: number;
+  warning?: string | null;
+  stats?: {
+    universeCount: number;
+    evaluatedCount: number;
+    successfulCount: number;
+    passedCount: number;
+    filteredOutCount: number;
+    failedCount: number;
+  };
   generatedAt: string;
 };

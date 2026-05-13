@@ -1,6 +1,7 @@
 "use client";
 
 import type { SmartMoneyTier } from '@/components/smart-money/types';
+import { getTierLabel } from '@/components/smart-money/tierLabels';
 
 type FilterToolbarProps = {
   limit: number;
@@ -49,7 +50,7 @@ export default function FilterToolbar({
             min={0}
             max={100}
             value={minCts}
-            onChange={(e) => onMinCtsChange(Number(e.target.value || 50))}
+            onChange={(e) => onMinCtsChange(Number(e.target.value || 45))}
             className="mt-1 w-full rounded-xl border border-white/10 bg-[#1A1F2B] px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
           />
         </label>
@@ -61,7 +62,7 @@ export default function FilterToolbar({
             min={0}
             max={100}
             value={minSms}
-            onChange={(e) => onMinSmsChange(Number(e.target.value || 60))}
+            onChange={(e) => onMinSmsChange(Number(e.target.value || 35))}
             className="mt-1 w-full rounded-xl border border-white/10 bg-[#1A1F2B] px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
           />
         </label>
@@ -74,9 +75,9 @@ export default function FilterToolbar({
             className="mt-1 w-full rounded-xl border border-white/10 bg-[#1A1F2B] px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
           >
             <option value="all">All</option>
-            <option value="tier_1">Tier 1</option>
-            <option value="tier_2">Tier 2</option>
-            <option value="tier_3">Tier 3</option>
+            <option value="tier_1">{getTierLabel('tier_1')}</option>
+            <option value="tier_2">{getTierLabel('tier_2')}</option>
+            <option value="tier_3">{getTierLabel('tier_3')}</option>
           </select>
         </label>
 

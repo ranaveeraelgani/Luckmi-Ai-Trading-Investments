@@ -1,4 +1,5 @@
 import type { SmartMoneyDashboardResponse } from '@/components/smart-money/types';
+import { getTierLabel } from '@/components/smart-money/tierLabels';
 
 type TierSummaryPanelProps = {
   tierCounts: SmartMoneyDashboardResponse['tierCounts'];
@@ -23,9 +24,9 @@ export default function TierSummaryPanel({ tierCounts, count }: TierSummaryPanel
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Box label="Tier 1" value={tierCounts.tier_1} accent="text-emerald-300" />
-        <Box label="Tier 2" value={tierCounts.tier_2} accent="text-amber-300" />
-        <Box label="Tier 3" value={tierCounts.tier_3} accent="text-gray-300" />
+        <Box label={getTierLabel('tier_1')} value={tierCounts.tier_1} accent="text-emerald-300" />
+        <Box label={getTierLabel('tier_2')} value={tierCounts.tier_2} accent="text-amber-300" />
+        <Box label={getTierLabel('tier_3')} value={tierCounts.tier_3} accent="text-gray-300" />
       </div>
     </section>
   );
