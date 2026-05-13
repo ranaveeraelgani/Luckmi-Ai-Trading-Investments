@@ -36,7 +36,7 @@ export async function loadAdminSystemReviewData() {
       .limit(10000),
     supabaseAdmin
       .from("option_paper_trades")
-      .select("user_id, symbol, status, pnl, entry_score, entry_at, exit_at, notes, auto_exit_reason")
+      .select("user_id, symbol, status, strategy, pnl, net_debit, qty_contracts, entry_score, entry_at, exit_at, notes, auto_exit_reason, execution_mode_snapshot, broker_status")
       .order("entry_at", { ascending: false })
       .limit(10000),
     supabaseAdmin
@@ -158,7 +158,7 @@ export async function loadAdminOverviewData(rangeRaw: string) {
 
   const optionTradesQuery = supabaseAdmin
     .from("option_paper_trades")
-    .select("user_id, symbol, status, pnl, entry_score, entry_at, exit_at, notes, auto_exit_reason")
+    .select("user_id, symbol, status, strategy, pnl, net_debit, qty_contracts, entry_score, entry_at, exit_at, notes, auto_exit_reason, execution_mode_snapshot, broker_status")
     .in("user_id", userIds)
     .order("entry_at", { ascending: false })
     .limit(range === "all" ? 50000 : 20000);

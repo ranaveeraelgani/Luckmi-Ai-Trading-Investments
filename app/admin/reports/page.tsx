@@ -110,10 +110,24 @@ type OverviewPayload = {
       cancelled: number;
       pending: number;
     };
+    options_performance?: {
+      total_entries: number;
+      total_closed: number;
+      wins: number;
+      losses: number;
+      win_rate: number;
+      avg_pnl: number;
+      avg_hold_hours: number;
+      auto_entries: number;
+      manual_entries: number;
+      insufficient_funds_skips: number;
+      strategy_breakdown: { call_debit_spread: number; put_debit_spread: number; other: number };
+      top_performing_symbols: Array<{ symbol: string; pnl: number; count: number }>;
+    };
   };
 };
 
-type AdminTab = "executive" | "risk" | "execution" | "strategy" | "users";
+type AdminTab = "executive" | "risk" | "execution" | "strategy" | "users" | "options";
 type TimeRange = "7d" | "30d" | "90d" | "all";
 type UserSort = "net_pnl" | "unrealized_pnl" | "open_positions" | "engine_success";
 
@@ -338,6 +352,11 @@ function AdminTabHowTo({ tab }: { tab: AdminTab }) {
       purpose: "Inspect user-level outcome distribution and operational quality.",
       watch: "Top accounts by selected metric, open positions, confidence, net P&L, and engine success.",
       action: "Use this tab for targeted interventions: coaching, guardrails, and account-level follow-up.",
+    },
+    options: {
+      purpose: "Deep-dive into options trading activity: entries, exits, win rate, and auto vs manual performance.",
+      watch: "Win rate, avg P&L per trade, auto-entry volume, exit reason breakdown, and top symbols.",
+      action: "If hard-stop exits dominate, tighten entry score thresholds. If auto-entries dominate losses, review AI gate quality.",
     },
   };
 
@@ -564,6 +583,7 @@ export default function AdminReportsPage() {
     { key: "risk", label: "Risk", desc: "Concentration + exposure" },
     { key: "execution", label: "Execution", desc: "Orders + engine" },
     { key: "strategy", label: "Strategy", desc: "CTS edge + tuning" },
+    { key: "options", label: "Options", desc: "Options activity + P&L" },
     { key: "users", label: "Users", desc: "Accounts + plans" },
   ];
 
@@ -1550,6 +1570,241 @@ export default function AdminReportsPage() {
                       ) : null}
                     </section>
                   </div>
+                </>
+              ) : null}
+
+              {/* ══════════════════════════════════════════════════════════════
+                  OPTIONS TAB
+              ══════════════════════════════════════════════════════════════ */}
+              {tab === "options" ? (
+                <>
+                  {/* Options Pulse */}
+                  <section className="rounded-3xl border border-blue-500/25 bg-gradient-to-r from-blue-500/[0.08] to-transparent p-4">
+                    <div className="mb-3 flex items-center gap-3">
+                      <LuckmiAiIcon size={22} />
+                      <div>
+                        <div className="text-sm font-semibold text-blue-300">Options Activity Pulse</div>
+                        <div className="text-xs text-gray-300">Platform-wide options trading performance for this period.</div>
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      <KpiCard
+                        label="Total Entries"
+                        value={String(data.diagnostics.options_performance?.total_entries ?? 0)}
+                        sub={`${data.diagnostics.options_performance?.total_closed ?? 0} closed · ${data.summary.options_open_positions} open`}
+                        tone="text-blue-300"
+                        hint="All option trades entered in the selected window, including still-open positions."
+                      />
+                      <KpiCard
+                        label="Win Rate"
+                        value={
+                          (data.diagnostics.options_performance?.total_closed ?? 0) > 0
+                            ? `${(data.diagnostics.options_performance?.win_rate ?? 0).toFixed(1)}%`
+                            : "—"
+                        }
+                        sub={`${data.diagnostics.options_performance?.wins ?? 0} wins · ${data.diagnostics.options_performance?.losses ?? 0} losses`}
+                        tone={
+                          (data.diagnostics.options_performance?.win_rate ?? 0) >= 50
+                            ? "text-emerald-300"
+                            : "text-amber-300"
+                        }
+                        hint="Win rate across all closed option positions."
+                      />
+                      <KpiCard
+                        label="Avg P&L / Trade"
+                        value={
+                          (data.diagnostics.options_performance?.total_closed ?? 0) > 0
+                            ? formatMoney(data.diagnostics.options_performance?.avg_pnl)
+                            : "—"
+                        }
+                        sub="Per closed option trade"
+                        tone={valueTone(toNumber(data.diagnostics.options_performance?.avg_pnl))}
+                        hint="Average realized P&L per closed option position."
+                      />
+                      <KpiCard
+                        label="Options P&L"
+                        value={formatMoney(data.summary.options_realized_pnl)}
+                        sub="Total realized options P&L"
+                        tone={valueTone(toNumber(data.summary.options_realized_pnl))}
+                        hint="Sum of all closed option trade P&L in this window."
+                      />
+                    </div>
+                  </section>
+
+                  {/* Entry Breakdown + Hold Time */}
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                      <div className="border-b border-gray-800 px-5 py-4">
+                        <h2 className="text-base font-semibold text-white">Entry Mode</h2>
+                        <p className="mt-1 text-sm text-gray-400">Auto (live broker) vs manual (paper) entries.</p>
+                      </div>
+                      <div className="space-y-4 p-5">
+                        {(() => {
+                          const auto = data.diagnostics.options_performance?.auto_entries ?? 0;
+                          const manual = data.diagnostics.options_performance?.manual_entries ?? 0;
+                          const skips = data.diagnostics.options_performance?.insufficient_funds_skips ?? 0;
+                          const total = auto + manual + skips;
+                          return (
+                            <>
+                              <FunnelBar label="Auto (Live)" count={auto} total={Math.max(1, total)} color="#3b82f6" sublabel="Broker-executed entries" />
+                              <FunnelBar label="Manual (Paper)" count={manual} total={Math.max(1, total)} color="#10b981" sublabel="Simulated / paper mode" />
+                              <FunnelBar label="Skipped (Funds)" count={skips} total={Math.max(1, total)} color="#ef4444" sublabel="Insufficient buying power" />
+                              {skips > 0 ? (
+                                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                                  ⚠ {skips} entries skipped due to insufficient funds. Check user buying power or reduce contract qty.
+                                </div>
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </section>
+
+                    <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                      <div className="border-b border-gray-800 px-5 py-4">
+                        <h2 className="text-base font-semibold text-white">Strategy Mix</h2>
+                        <p className="mt-1 text-sm text-gray-400">Call vs put debit spread usage.</p>
+                      </div>
+                      <div className="space-y-4 p-5">
+                        {(() => {
+                          const sb = data.diagnostics.options_performance?.strategy_breakdown;
+                          const total = (sb?.call_debit_spread ?? 0) + (sb?.put_debit_spread ?? 0) + (sb?.other ?? 0);
+                          return (
+                            <>
+                              <FunnelBar label="Call Debit Spread" count={sb?.call_debit_spread ?? 0} total={Math.max(1, total)} color="#10b981" sublabel="Bullish direction" />
+                              <FunnelBar label="Put Debit Spread" count={sb?.put_debit_spread ?? 0} total={Math.max(1, total)} color="#ef4444" sublabel="Bearish direction" />
+                              {(sb?.other ?? 0) > 0 ? (
+                                <FunnelBar label="Other" count={sb?.other ?? 0} total={Math.max(1, total)} color="#6b7280" />
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </section>
+
+                    <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                      <div className="border-b border-gray-800 px-5 py-4">
+                        <h2 className="text-base font-semibold text-white">Avg Hold Time</h2>
+                        <p className="mt-1 text-sm text-gray-400">How long options are held before closing.</p>
+                      </div>
+                      <div className="p-5">
+                        {(() => {
+                          const hrs = data.diagnostics.options_performance?.avg_hold_hours ?? 0;
+                          const days = Math.floor(hrs / 24);
+                          const remHrs = Math.round(hrs % 24);
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <div className="rounded-2xl bg-[#1a1f2e] p-4">
+                                <div className="text-xs text-gray-400">Avg Hold Duration</div>
+                                <div className="mt-1 text-2xl font-semibold text-white">
+                                  {hrs === 0
+                                    ? "—"
+                                    : days > 0
+                                    ? `${days}d ${remHrs}h`
+                                    : `${Math.round(hrs)}h`}
+                                </div>
+                                <div className="mt-1 text-xs text-gray-500">
+                                  Across {data.diagnostics.options_performance?.total_closed ?? 0} closed trades
+                                </div>
+                              </div>
+                              <div className="rounded-2xl bg-[#1a1f2e] p-4">
+                                <div className="text-xs text-gray-400">Exit Reasons</div>
+                                <div className="mt-2 space-y-1 text-xs">
+                                  <div className="flex justify-between text-gray-300"><span>Trail Stop</span><span className="text-white">{data.diagnostics.option_exit_reasons?.trail_stop_from_peak ?? 0}</span></div>
+                                  <div className="flex justify-between text-gray-300"><span>Hard Stop</span><span className="text-red-300">{data.diagnostics.option_exit_reasons?.hard_loss_stop ?? 0}</span></div>
+                                  <div className="flex justify-between text-gray-300"><span>Manual</span><span className="text-white">{data.diagnostics.option_exit_reasons?.manual ?? 0}</span></div>
+                                  <div className="flex justify-between text-gray-300"><span>Expiry</span><span className="text-amber-300">{data.diagnostics.option_exit_reasons?.expiry ?? 0}</span></div>
+                                  <div className="flex justify-between text-gray-300"><span>Other</span><span className="text-gray-400">{data.diagnostics.option_exit_reasons?.other ?? 0}</span></div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </section>
+                  </div>
+
+                  {/* Top Performing Option Symbols */}
+                  <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                    <div className="border-b border-gray-800 px-5 py-4">
+                      <h2 className="text-base font-semibold text-white">Top Symbols by Options P&L</h2>
+                      <p className="mt-1 text-sm text-gray-400">Closed option trades ranked by realized P&L per symbol.</p>
+                    </div>
+                    <div className="p-5">
+                      {(data.diagnostics.options_performance?.top_performing_symbols?.length ?? 0) === 0 ? (
+                        <div className="text-sm text-gray-500">No closed option trades in this window.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {(data.diagnostics.options_performance?.top_performing_symbols ?? []).map((row) => (
+                            <div
+                              key={row.symbol}
+                              className="flex items-center justify-between rounded-2xl bg-[#1a1f2e] px-4 py-3 text-sm"
+                            >
+                              <div>
+                                <span className="font-medium text-white">{row.symbol}</span>
+                                <span className="ml-2 text-xs text-gray-400">{row.count} trade{row.count !== 1 ? "s" : ""}</span>
+                              </div>
+                              <span className={`font-semibold ${valueTone(row.pnl)}`}>{formatMoney(row.pnl)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Option Exit Audit Table */}
+                  <section className="rounded-3xl border border-gray-800 bg-[#11151c]">
+                    <div className="border-b border-gray-800 px-5 py-4">
+                      <h2 className="text-base font-semibold text-white">Exit Reason Audit</h2>
+                      <p className="mt-1 text-sm text-gray-400">All closed option exits grouped by user, symbol, and reason.</p>
+                    </div>
+                    <div className="p-5">
+                      {!data.diagnostics.option_exit_audit_rows || data.diagnostics.option_exit_audit_rows.length === 0 ? (
+                        <div className="text-sm text-gray-500">No closed option exits in this window.</div>
+                      ) : (
+                        <div className="overflow-x-auto rounded-2xl border border-white/10">
+                          <table className="w-full min-w-[820px] text-sm">
+                            <thead className="bg-[#151b27] text-xs uppercase tracking-wide text-gray-400">
+                              <tr>
+                                <th className="px-3 py-2 text-left">User</th>
+                                <th className="px-3 py-2 text-left">Symbol</th>
+                                <th className="px-3 py-2 text-left">Reason</th>
+                                <th className="px-3 py-2 text-right">Exits</th>
+                                <th className="px-3 py-2 text-right">P&L</th>
+                                <th className="px-3 py-2 text-left">Last Exit</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {data.diagnostics.option_exit_audit_rows.map((row, idx) => (
+                                <tr key={`${row.user_id}-${row.symbol}-${row.reason}-${idx}`} className="border-t border-white/5 bg-[#11151c]">
+                                  <td className="px-3 py-2 text-gray-200">{row.user_name || row.user_id.slice(0, 8)}</td>
+                                  <td className="px-3 py-2 font-medium text-white">{row.symbol}</td>
+                                  <td className="px-3 py-2">
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                      row.reason === "hard-loss-stop"
+                                        ? "bg-red-500/20 text-red-300"
+                                        : row.reason === "trail-stop-from-peak"
+                                        ? "bg-emerald-500/20 text-emerald-300"
+                                        : row.reason === "manual"
+                                        ? "bg-blue-500/20 text-blue-300"
+                                        : "bg-white/10 text-gray-300"
+                                    }`}>
+                                      {row.reason}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-gray-200">{row.exits}</td>
+                                  <td className={`px-3 py-2 text-right font-medium ${valueTone(toNumber(row.total_pnl))}`}>
+                                    {formatMoney(row.total_pnl)}
+                                  </td>
+                                  <td className="px-3 py-2 text-gray-400">{row.last_exit_at ? new Date(row.last_exit_at).toLocaleString() : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </section>
                 </>
               ) : null}
             </>

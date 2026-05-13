@@ -42,7 +42,18 @@ type OptionTrade = {
   current_pnl?: number | null;
   current_value?: number | null;
   entry_score?: number | null;
+  net_debit?: number | null;
+  qty_contracts?: number | null;
+  max_gain?: number | null;
+  max_loss?: number | null;
+  execution_mode_snapshot?: string | null;
+  broker_status?: string | null;
+  auto_exit_reason?: string | null;
   notes?: string | null;
+  long_expiry?: string | null;
+  short_expiry?: string | null;
+  long_strike?: number | null;
+  short_strike?: number | null;
 };
 
 type Position = {
@@ -55,7 +66,7 @@ type Position = {
 };
 
 type TimeRange = "7d" | "30d" | "90d" | "all";
-type ReportTab = "overview" | "risk" | "coach" | "advanced";
+type ReportTab = "overview" | "risk" | "options" | "coach" | "advanced";
 
 type SubscriptionState = {
   enabled: boolean;
@@ -223,6 +234,11 @@ function ReportTabHowTo({
       purpose: "Track concentration and open exposure before adding more risk.",
       watch: "Top symbol share, open winners vs losers, diversification score, and Risk Alerts.",
       action: "If top symbol concentration is high, rebalance exposure and avoid stacking one ticker.",
+    },
+    options: {
+      purpose: "Deep look at your options trading performance: entries, exits, win rate, and hold quality.",
+      watch: "Win rate, avg P&L, exit reason breakdown, open positions with entry scores, and strategy mix.",
+      action: "If hard-stop exits dominate, review entry quality. If trail stops trigger, your entries are working — protect gains with tighter trail settings.",
     },
     coach: {
       purpose: "Get plain-English feedback on behavior quality from Luckmi AI.",
@@ -609,6 +625,85 @@ export default function ReportsPage() {
     };
   }, [filteredDecisions, filteredTrades, filteredOptionTrades, positions]);
 
+  const optionMetrics = useMemo(() => {
+    const closed = filteredOptionTrades.filter(
+      (t) => String(t.status || "").toLowerCase() === "closed"
+    );
+    const open = filteredOptionTrades.filter(
+      (t) => String(t.status || "").toLowerCase() === "open"
+    );
+
+    const wins = closed.filter((t) => toNumber(t.pnl) > 0).length;
+    const losses = closed.filter((t) => toNumber(t.pnl) < 0).length;
+    const winRate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
+    const totalClosedPnl = closed.reduce((sum, t) => sum + toNumber(t.pnl), 0);
+    const avgPnl = closed.length > 0 ? totalClosedPnl / closed.length : 0;
+
+    let holdHoursSum = 0;
+    let holdHoursCount = 0;
+    for (const t of closed) {
+      const entryTs = new Date(String(t.entry_at || "")).getTime();
+      const exitTs = new Date(String(t.exit_at || "")).getTime();
+      if (Number.isFinite(entryTs) && Number.isFinite(exitTs) && exitTs > entryTs) {
+        holdHoursSum += (exitTs - entryTs) / (1000 * 60 * 60);
+        holdHoursCount += 1;
+      }
+    }
+    const avgHoldHours = holdHoursCount > 0 ? holdHoursSum / holdHoursCount : 0;
+
+    const exitReasons = { trail_stop: 0, hard_stop: 0, manual: 0, other: 0 };
+    for (const t of closed) {
+      const src = `${String(t.auto_exit_reason || "")} ${String(t.notes || "")}`.toLowerCase();
+      if (src.includes("trail-stop-from-peak")) exitReasons.trail_stop += 1;
+      else if (src.includes("hard-loss-stop")) exitReasons.hard_stop += 1;
+      else if (src.includes("manual")) exitReasons.manual += 1;
+      else exitReasons.other += 1;
+    }
+
+    const callSpreads = filteredOptionTrades.filter(
+      (t) => String(t.strategy || "").toLowerCase() === "call_debit_spread"
+    ).length;
+    const putSpreads = filteredOptionTrades.filter(
+      (t) => String(t.strategy || "").toLowerCase() === "put_debit_spread"
+    ).length;
+
+    const autoEntries = filteredOptionTrades.filter(
+      (t) =>
+        String(t.execution_mode_snapshot || "").toLowerCase() === "live" &&
+        String(t.broker_status || "").toLowerCase() !== "entry_skipped_insufficient_funds"
+    ).length;
+    const insufficientFundsSkips = filteredOptionTrades.filter(
+      (t) => String(t.broker_status || "").toLowerCase() === "entry_skipped_insufficient_funds"
+    ).length;
+
+    const bestTrade = closed.reduce<OptionTrade | null>((best, t) => {
+      if (!best) return t;
+      return toNumber(t.pnl) > toNumber(best.pnl) ? t : best;
+    }, null);
+    const worstTrade = closed.reduce<OptionTrade | null>((worst, t) => {
+      if (!worst) return t;
+      return toNumber(t.pnl) < toNumber(worst.pnl) ? t : worst;
+    }, null);
+
+    return {
+      closed,
+      open,
+      wins,
+      losses,
+      winRate,
+      totalClosedPnl,
+      avgPnl,
+      avgHoldHours,
+      exitReasons,
+      callSpreads,
+      putSpreads,
+      autoEntries,
+      insufficientFundsSkips,
+      bestTrade,
+      worstTrade,
+    };
+  }, [filteredOptionTrades]);
+
   const aiNarrative = useMemo(() => {
     if (metrics.totalDecisions === 0) {
       return "Luckmi has not recorded enough AI decisions yet. Once the engine starts evaluating stocks, this report will explain what the AI is seeing and how decisions are developing.";
@@ -753,6 +848,7 @@ export default function ReportsPage() {
   const tabConfig: Array<{ key: ReportTab; label: string; free: boolean }> = [
     { key: "overview", label: "Overview", free: true },
     { key: "risk", label: "Risk", free: true },
+    { key: "options", label: "Options", free: true },
     { key: "coach", label: "AI Coach", free: false },
     { key: "advanced", label: "Advanced", free: false },
   ];
@@ -952,18 +1048,18 @@ export default function ReportsPage() {
                     <div className="rounded-2xl bg-[#1a1f2e] p-4">
                       <div className="text-xs text-gray-400">Best Trade</div>
                       <div className="mt-1 text-sm font-medium text-emerald-300">
-                        {metrics.bestTrade
+                        {metrics.bestTrade && toNumber(metrics.bestTrade.pnl) > 0
                           ? `${metrics.bestTrade.symbol} ${formatMoney(toNumber(metrics.bestTrade.pnl))}`
-                          : "-"}
+                          : <span className="text-gray-500">No winning trades in this window</span>}
                       </div>
                     </div>
 
                     <div className="rounded-2xl bg-[#1a1f2e] p-4">
                       <div className="text-xs text-gray-400">Worst Trade</div>
                       <div className="mt-1 text-sm font-medium text-red-300">
-                        {metrics.worstTrade
+                        {metrics.worstTrade && toNumber(metrics.worstTrade.pnl) < 0
                           ? `${metrics.worstTrade.symbol} ${formatMoney(toNumber(metrics.worstTrade.pnl))}`
-                          : "-"}
+                          : <span className="text-gray-500">No losing trades in this window</span>}
                       </div>
                     </div>
                   </div>
@@ -1116,6 +1212,320 @@ export default function ReportsPage() {
                   ) : null}
                 </div>
               </Section>
+            </>
+          ) : null}
+
+          {!loading && tab === "options" ? (
+            <>
+              {/* Options Pulse bar */}
+              <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-blue-500/25 bg-gradient-to-r from-blue-500/[0.07] via-[#11151c] to-[#11151c] px-5 py-4">
+                <LuckmiAiIcon size={32} />
+                <div className="flex-1 min-w-0">
+                  <div className="mb-2 text-[10px] uppercase tracking-widest text-blue-300/60">Options Pulse</div>
+                  <div className="flex flex-wrap gap-x-8 gap-y-2">
+                    <div className="flex items-baseline gap-2">
+                      <span className={`text-2xl font-semibold ${optionMetrics.totalClosedPnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                        {formatMoney(optionMetrics.totalClosedPnl)}
+                      </span>
+                      <span className="text-sm text-gray-400">realized P&L</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 border-l border-white/10 pl-6">
+                      <span className={`text-2xl font-semibold ${optionMetrics.winRate >= 50 ? "text-emerald-300" : "text-amber-300"}`}>
+                        {optionMetrics.closed.length > 0 ? `${optionMetrics.winRate.toFixed(1)}%` : "—"}
+                      </span>
+                      <span className="text-sm text-gray-400">win rate</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 border-l border-white/10 pl-6">
+                      <span className="text-2xl font-semibold text-white">{optionMetrics.closed.length}</span>
+                      <span className="text-sm text-gray-400">closed · <span className="text-blue-300">{optionMetrics.open.length} open</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <StatCard
+                  label="Options P&L"
+                  value={formatMoney(optionMetrics.totalClosedPnl)}
+                  subtext={`${optionMetrics.closed.length} closed trades`}
+                  tone={optionMetrics.totalClosedPnl >= 0 ? "green" : "red"}
+                  hint="Total realized P&L from closed option positions."
+                />
+                <StatCard
+                  label="Win Rate"
+                  value={optionMetrics.closed.length > 0 ? `${optionMetrics.winRate.toFixed(1)}%` : "—"}
+                  subtext={`${optionMetrics.wins} wins · ${optionMetrics.losses} losses`}
+                  tone={optionMetrics.winRate >= 50 ? "green" : "amber"}
+                  hint="Share of closed option trades with positive P&L."
+                />
+                <StatCard
+                  label="Avg P&L / Trade"
+                  value={optionMetrics.closed.length > 0 ? formatMoney(optionMetrics.avgPnl) : "—"}
+                  subtext="Per closed trade"
+                  tone={optionMetrics.avgPnl >= 0 ? "green" : "red"}
+                  hint="Average realized P&L per closed option trade."
+                />
+                <StatCard
+                  label="Open Positions"
+                  value={String(optionMetrics.open.length)}
+                  subtext={`${formatMoney(metrics.optionsOpenUnrealized)} unrealized`}
+                  tone="blue"
+                  hint="Currently open option positions and their mark-to-market value."
+                />
+              </div>
+
+              <div className="grid gap-6 xl:grid-cols-2">
+                {/* Exit Reason Breakdown */}
+                <Section title="Exit Reason Breakdown" subtitle="How your options closed — auto-managed vs manual.">
+                  {optionMetrics.closed.length === 0 ? (
+                    <div className="rounded-2xl bg-[#1a1f2e] p-4 text-sm text-gray-400">
+                      No closed option trades yet in this window.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="rounded-2xl bg-[#1a1f2e] p-3 text-center">
+                          <div className="text-[10px] text-gray-400">Trail Stop</div>
+                          <div className="mt-1 text-xl font-semibold text-emerald-300">{optionMetrics.exitReasons.trail_stop}</div>
+                        </div>
+                        <div className="rounded-2xl bg-[#1a1f2e] p-3 text-center">
+                          <div className="text-[10px] text-gray-400">Hard Stop</div>
+                          <div className="mt-1 text-xl font-semibold text-red-300">{optionMetrics.exitReasons.hard_stop}</div>
+                        </div>
+                        <div className="rounded-2xl bg-[#1a1f2e] p-3 text-center">
+                          <div className="text-[10px] text-gray-400">Manual</div>
+                          <div className="mt-1 text-xl font-semibold text-blue-300">{optionMetrics.exitReasons.manual}</div>
+                        </div>
+                        <div className="rounded-2xl bg-[#1a1f2e] p-3 text-center">
+                          <div className="text-[10px] text-gray-400">Other</div>
+                          <div className="mt-1 text-xl font-semibold text-gray-300">{optionMetrics.exitReasons.other}</div>
+                        </div>
+                      </div>
+
+                      {optionMetrics.exitReasons.hard_stop > optionMetrics.exitReasons.trail_stop ? (
+                        <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-100">
+                          Hard stops are outpacing trail stops. Review entry quality — consider entering only on higher entry scores.
+                        </div>
+                      ) : optionMetrics.exitReasons.trail_stop > 0 ? (
+                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+                          Trail stops are triggering — your entries are reaching profit targets. Gains are being protected by the auto-exit system.
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </Section>
+
+                {/* Best / Worst Trade + Hold Time */}
+                <Section title="Trade Performance" subtitle="Best, worst, avg hold duration.">
+                  <div className="space-y-3">
+                    <div className="rounded-2xl bg-[#1a1f2e] p-4">
+                      <div className="text-xs text-gray-400">Best Trade</div>
+                      <div className="mt-1 text-sm font-medium text-emerald-300">
+                        {optionMetrics.bestTrade && toNumber(optionMetrics.bestTrade.pnl) > 0
+                          ? `${optionMetrics.bestTrade.symbol} ${formatMoney(toNumber(optionMetrics.bestTrade.pnl))}`
+                          : <span className="text-gray-500">No winning trades in this window</span>}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-[#1a1f2e] p-4">
+                      <div className="text-xs text-gray-400">Worst Trade</div>
+                      <div className="mt-1 text-sm font-medium text-red-300">
+                        {optionMetrics.worstTrade && toNumber(optionMetrics.worstTrade.pnl) < 0
+                          ? `${optionMetrics.worstTrade.symbol} ${formatMoney(toNumber(optionMetrics.worstTrade.pnl))}`
+                          : <span className="text-gray-500">No losing trades in this window</span>}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-[#1a1f2e] p-4">
+                      <div className="text-xs text-gray-400">Avg Hold Duration</div>
+                      <div className="mt-1 text-sm font-medium text-white">
+                        {optionMetrics.avgHoldHours === 0
+                          ? "—"
+                          : optionMetrics.avgHoldHours >= 24
+                          ? `${Math.floor(optionMetrics.avgHoldHours / 24)}d ${Math.round(optionMetrics.avgHoldHours % 24)}h`
+                          : `${Math.round(optionMetrics.avgHoldHours)}h`}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl bg-[#1a1f2e] p-3">
+                        <div className="text-[10px] text-gray-400">Call Spreads</div>
+                        <div className="mt-1 text-lg font-semibold text-emerald-300">{optionMetrics.callSpreads}</div>
+                      </div>
+                      <div className="rounded-2xl bg-[#1a1f2e] p-3">
+                        <div className="text-[10px] text-gray-400">Put Spreads</div>
+                        <div className="mt-1 text-lg font-semibold text-red-300">{optionMetrics.putSpreads}</div>
+                      </div>
+                    </div>
+                  </div>
+                </Section>
+              </div>
+
+              {/* Open Positions */}
+              {optionMetrics.open.length > 0 ? (
+                <Section title="Open Option Positions" subtitle="Active positions with entry score, P&L%, and trail stop progress.">
+                  <div className="space-y-3">
+                    {optionMetrics.open.map((t) => {
+                      const unrealizedPnl = toNumber(t.current_pnl ?? t.pnl);
+                      const expiryDate = t.long_expiry || t.short_expiry;
+                      const costBasis = toNumber(t.net_debit) * toNumber(t.qty_contracts, 1) * 100;
+                      const pnlPct = costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : null;
+                      const maxGainDollars = toNumber(t.max_gain) * toNumber(t.qty_contracts, 1) * 100;
+                      const maxLossDollars = toNumber(t.max_loss) * toNumber(t.qty_contracts, 1) * 100;
+                      // progress toward trail activation (50% of max gain by default)
+                      const trailActivationPct = 50;
+                      const trailActivationDollars = maxGainDollars > 0 ? maxGainDollars * (trailActivationPct / 100) : 0;
+                      const progressToTrail = trailActivationDollars > 0
+                        ? Math.min(100, Math.max(0, (unrealizedPnl / trailActivationDollars) * 100))
+                        : null;
+                      const hardStopDollars = maxLossDollars > 0 ? -(maxLossDollars * 0.35) : 0;
+                      const distToHardStop = maxLossDollars > 0
+                        ? Math.min(100, Math.max(0, ((unrealizedPnl - hardStopDollars) / Math.abs(hardStopDollars)) * 100))
+                        : null;
+                      return (
+                        <div key={t.id} className="rounded-2xl border border-white/5 bg-[#1a1f2e] p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-white">{t.symbol}</span>
+                              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-gray-400">
+                                {String(t.strategy || "").replace(/_/g, " ")}
+                              </span>
+                              {String(t.execution_mode_snapshot || "") === "live" ? (
+                                <span className="rounded-full border border-blue-500/30 bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-300">Auto</span>
+                              ) : null}
+                            </div>
+                            <div className="text-right">
+                              <span className={`font-semibold ${unrealizedPnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                                {unrealizedPnl >= 0 ? "+" : ""}{formatMoney(unrealizedPnl)}
+                              </span>
+                              {pnlPct !== null ? (
+                                <span className={`ml-2 text-xs font-medium ${pnlPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                  ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-400">
+                            {t.entry_score != null ? (
+                              <span>Entry Score: <span className={`font-medium ${toNumber(t.entry_score) >= 70 ? "text-emerald-300" : "text-amber-300"}`}>{toNumber(t.entry_score).toFixed(0)}</span></span>
+                            ) : null}
+                            {expiryDate ? (
+                              <span>Expires: <span className="text-white">{new Date(expiryDate).toLocaleDateString()}</span></span>
+                            ) : null}
+                            {t.entry_at ? (
+                              <span>Entered: <span className="text-white">{new Date(t.entry_at).toLocaleDateString()}</span></span>
+                            ) : null}
+                          </div>
+                          {/* Trail stop progress bar */}
+                          {progressToTrail !== null && unrealizedPnl > 0 ? (
+                            <div className="mt-3">
+                              <div className="mb-1 flex items-center justify-between text-[10px] text-gray-500">
+                                <span>Trail activates at {trailActivationPct}% of max gain</span>
+                                <span className={progressToTrail >= 100 ? "text-emerald-300 font-medium" : "text-gray-400"}>
+                                  {progressToTrail >= 100 ? "✓ Active" : `${progressToTrail.toFixed(0)}% there`}
+                                </span>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                                <div
+                                  className={`h-full rounded-full transition-all ${progressToTrail >= 100 ? "bg-emerald-400" : "bg-emerald-600"}`}
+                                  style={{ width: `${progressToTrail}%` }}
+                                />
+                              </div>
+                            </div>
+                          ) : distToHardStop !== null && unrealizedPnl < 0 ? (
+                            <div className="mt-3">
+                              <div className="mb-1 flex items-center justify-between text-[10px] text-gray-500">
+                                <span>Hard stop at −35% of max loss</span>
+                                <span className={distToHardStop <= 20 ? "text-red-400 font-medium" : "text-gray-400"}>
+                                  {distToHardStop <= 20 ? `⚠ ${(100 - distToHardStop).toFixed(0)}% to stop` : `${distToHardStop.toFixed(0)}% buffer`}
+                                </span>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                                <div
+                                  className={`h-full rounded-full transition-all ${distToHardStop <= 20 ? "bg-red-500" : distToHardStop <= 50 ? "bg-amber-500" : "bg-gray-600"}`}
+                                  style={{ width: `${100 - distToHardStop}%` }}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Section>
+              ) : null}
+
+              {/* Closed Trade History */}
+              {optionMetrics.closed.length > 0 ? (
+                <Section title="Closed Option Trades" subtitle="Full P&L breakdown for the selected window.">
+                  <div className="overflow-x-auto rounded-2xl border border-white/10">
+                    <table className="w-full min-w-[600px] text-sm">
+                      <thead className="bg-[#1a1f2e] text-xs uppercase tracking-wide text-gray-400">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Symbol</th>
+                          <th className="px-3 py-2 text-left">Strategy</th>
+                          <th className="px-3 py-2 text-left">Exit Reason</th>
+                          <th className="px-3 py-2 text-right">Score</th>
+                          <th className="px-3 py-2 text-right">P&L</th>
+                          <th className="px-3 py-2 text-right">P&L %</th>
+                          <th className="px-3 py-2 text-left">Closed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {optionMetrics.closed.map((t) => {
+                          const src = `${String(t.auto_exit_reason || "")} ${String(t.notes || "")}`.toLowerCase();
+                          const exitLabel = src.includes("trail-stop-from-peak")
+                            ? "trail-stop"
+                            : src.includes("hard-loss-stop")
+                            ? "hard-stop"
+                            : src.includes("manual")
+                            ? "manual"
+                            : "—";
+                          const exitTone =
+                            exitLabel === "trail-stop"
+                              ? "text-emerald-300"
+                              : exitLabel === "hard-stop"
+                              ? "text-red-300"
+                              : exitLabel === "manual"
+                              ? "text-blue-300"
+                              : "text-gray-400";
+                          const costBasis = toNumber(t.net_debit) * toNumber(t.qty_contracts, 1) * 100;
+                          const pnlPct = costBasis > 0 ? (toNumber(t.pnl) / costBasis) * 100 : null;
+                          return (
+                            <tr key={t.id} className="border-t border-white/5">
+                              <td className="px-3 py-2 font-medium text-white">{t.symbol}</td>
+                              <td className="px-3 py-2 text-gray-400 capitalize">
+                                {String(t.strategy || "—").replace(/_/g, " ")}
+                              </td>
+                              <td className={`px-3 py-2 ${exitTone}`}>{exitLabel}</td>
+                              <td className="px-3 py-2 text-right text-gray-300">
+                                {t.entry_score != null ? toNumber(t.entry_score).toFixed(0) : "—"}
+                              </td>
+                              <td className={`px-3 py-2 text-right font-medium ${toNumber(t.pnl) >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                                {formatMoney(t.pnl)}
+                              </td>
+                              <td className={`px-3 py-2 text-right text-xs font-medium ${pnlPct === null ? "text-gray-500" : pnlPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {pnlPct !== null ? `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%` : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-gray-400">
+                                {t.exit_at ? new Date(t.exit_at).toLocaleDateString() : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {optionMetrics.insufficientFundsSkips > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-100">
+                      {optionMetrics.insufficientFundsSkips} entries were skipped due to insufficient buying power in this window.
+                    </div>
+                  ) : null}
+                </Section>
+              ) : (
+                <Section title="Closed Option Trades" subtitle="Your option trade history for this window.">
+                  <div className="rounded-2xl bg-[#1a1f2e] p-4 text-sm text-gray-400">
+                    No closed option trades in this window. Select a wider date range or check the Options page for open positions.
+                  </div>
+                </Section>
+              )}
             </>
           ) : null}
 

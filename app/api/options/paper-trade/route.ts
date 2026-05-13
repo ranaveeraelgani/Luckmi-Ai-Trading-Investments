@@ -181,7 +181,7 @@ export async function GET(req: Request) {
          short_strike, short_expiry, option_type, net_debit, max_gain,
          max_loss, entry_score, entry_spot_price, status,
         entry_at, exit_at, exit_price, pnl, broker_order_id, notes,
-        qty_contracts, execution_mode_snapshot, broker_status,
+        qty_contracts, execution_mode_snapshot, broker_status, auto_exit_reason,
         entry_broker_order_id, exit_broker_order_id, close_requested_at, peak_pnl`
       )
       .eq("user_id", user.id)

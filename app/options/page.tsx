@@ -803,6 +803,17 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
   const hasLiveValue = !isClosed && trade.current_value != null;
   const qty = Math.max(1, Math.floor(Number(trade.qty_contracts ?? 1)));
   const avgEntry = trade.broker_entry_price != null ? trade.broker_entry_price : trade.net_debit;
+
+  // P&L% — cost basis = net_debit (per-share) × qty_contracts × 100 shares/contract
+  const costBasis = Number(trade.net_debit) * qty * 100;
+  const openPnlPct =
+    !isClosed && hasLivePnl && costBasis > 0
+      ? (trade.current_pnl! / costBasis) * 100
+      : null;
+  const closedPnlPct =
+    isClosed && trade.pnl != null && costBasis > 0
+      ? (trade.pnl / costBasis) * 100
+      : null;
   const typeLabel = trade.option_type === 'put' ? 'Put' : trade.option_type === 'call' ? 'Call' : '—';
   const strikeLabel =
     trade.long_strike != null && trade.short_strike != null
@@ -852,6 +863,11 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
             <div className={`text-sm font-bold ${trade.pnl >= 0 ? "text-emerald-300" : "text-red-400"}`}>
               {trade.pnl >= 0 ? "+" : ""}{fmt$(trade.pnl)}
             </div>
+            {closedPnlPct != null && (
+              <div className={`text-[10px] font-medium ${closedPnlPct >= 0 ? "text-emerald-400/80" : "text-red-400/80"}`}>
+                {closedPnlPct >= 0 ? "+" : ""}{closedPnlPct.toFixed(1)}%
+              </div>
+            )}
           </>
         ) : hasLivePnl ? (
           <>
@@ -862,6 +878,11 @@ function PaperTradeRow({ trade, onClose }: { trade: PaperTrade; onClose?: (t: Pa
             <div className={`text-sm font-bold ${trade.current_pnl! >= 0 ? "text-emerald-300" : "text-red-400"}`}>
               {trade.current_pnl! >= 0 ? "+" : ""}{fmt$(trade.current_pnl!)}
             </div>
+            {openPnlPct != null && (
+              <div className={`text-[10px] font-medium ${openPnlPct >= 0 ? "text-emerald-400/80" : "text-red-400/80"}`}>
+                {openPnlPct >= 0 ? "+" : ""}{openPnlPct.toFixed(1)}%
+              </div>
+            )}
           </>
         ) : (
           <div className="text-[10px] text-gray-600">Live price pending</div>

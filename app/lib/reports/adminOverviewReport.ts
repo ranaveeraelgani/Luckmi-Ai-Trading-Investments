@@ -67,6 +67,20 @@ export function buildEmptyAdminOverviewResponse(range: string) {
         one_to_three: 0,
         four_plus: 0,
       },
+      options_performance: {
+        total_entries: 0,
+        total_closed: 0,
+        wins: 0,
+        losses: 0,
+        win_rate: 0,
+        avg_pnl: 0,
+        avg_hold_hours: 0,
+        auto_entries: 0,
+        manual_entries: 0,
+        insufficient_funds_skips: 0,
+        strategy_breakdown: { call_debit_spread: 0, put_debit_spread: 0, other: 0 },
+        top_performing_symbols: [],
+      },
     },
   };
 }
@@ -596,6 +610,85 @@ export function buildAdminOverviewResponse({
     })
     .slice(0, 150);
 
+  // ─── Options Performance Metrics ────────────────────────────────────────────
+  const closedOptionTrades = optionTrades.filter(
+    (t: any) => String(t?.status || "").toLowerCase() === "closed"
+  );
+  const optionWins = closedOptionTrades.filter((t: any) => toNumber(t?.pnl) > 0).length;
+  const optionLosses = closedOptionTrades.filter((t: any) => toNumber(t?.pnl) < 0).length;
+  const optionWinRate =
+    closedOptionTrades.length > 0 ? (optionWins / closedOptionTrades.length) * 100 : 0;
+  const optionAvgPnl =
+    closedOptionTrades.length > 0
+      ? closedOptionTrades.reduce((sum: number, t: any) => sum + toNumber(t?.pnl), 0) /
+        closedOptionTrades.length
+      : 0;
+
+  let holdHoursSum = 0;
+  let holdHoursCount = 0;
+  for (const t of closedOptionTrades) {
+    const entryTs = new Date(String(t?.entry_at || "")).getTime();
+    const exitTs = new Date(String(t?.exit_at || "")).getTime();
+    if (Number.isFinite(entryTs) && Number.isFinite(exitTs) && exitTs > entryTs) {
+      holdHoursSum += (exitTs - entryTs) / (1000 * 60 * 60);
+      holdHoursCount += 1;
+    }
+  }
+  const optionAvgHoldHours = holdHoursCount > 0 ? holdHoursSum / holdHoursCount : 0;
+
+  let optionAutoEntries = 0;
+  let optionManualEntries = 0;
+  let optionInsufficientFundsSkips = 0;
+
+  for (const t of optionTrades) {
+    const mode = String(t?.execution_mode_snapshot || "").toLowerCase();
+    const brokStat = String(t?.broker_status || "").toLowerCase();
+    if (brokStat === "entry_skipped_insufficient_funds") {
+      optionInsufficientFundsSkips += 1;
+    } else if (mode === "live") {
+      optionAutoEntries += 1;
+    } else {
+      optionManualEntries += 1;
+    }
+  }
+
+  const strategyBreakdown = { call_debit_spread: 0, put_debit_spread: 0, other: 0 };
+  for (const t of optionTrades) {
+    const s = String(t?.strategy || "").toLowerCase();
+    if (s === "call_debit_spread") strategyBreakdown.call_debit_spread += 1;
+    else if (s === "put_debit_spread") strategyBreakdown.put_debit_spread += 1;
+    else strategyBreakdown.other += 1;
+  }
+
+  const optionSymbolMap = new Map<string, { pnl: number; count: number }>();
+  for (const t of closedOptionTrades) {
+    const symbol = String(t?.symbol || "").toUpperCase();
+    if (!symbol) continue;
+    const curr = optionSymbolMap.get(symbol) ?? { pnl: 0, count: 0 };
+    curr.pnl += toNumber(t?.pnl);
+    curr.count += 1;
+    optionSymbolMap.set(symbol, curr);
+  }
+  const topPerformingOptionSymbols = [...optionSymbolMap.entries()]
+    .sort((a, b) => b[1].pnl - a[1].pnl)
+    .slice(0, 8)
+    .map(([symbol, v]) => ({ symbol, pnl: v.pnl, count: v.count }));
+
+  const optionsPerformance = {
+    total_entries: optionTrades.length,
+    total_closed: closedOptionTrades.length,
+    wins: optionWins,
+    losses: optionLosses,
+    win_rate: optionWinRate,
+    avg_pnl: optionAvgPnl,
+    avg_hold_hours: optionAvgHoldHours,
+    auto_entries: optionAutoEntries,
+    manual_entries: optionManualEntries,
+    insufficient_funds_skips: optionInsufficientFundsSkips,
+    strategy_breakdown: strategyBreakdown,
+    top_performing_symbols: topPerformingOptionSymbols,
+  };
+
   return {
     generated_at: new Date().toISOString(),
     applied_range: range,
@@ -641,6 +734,7 @@ export function buildAdminOverviewResponse({
       symbol_concentration: symbolConcentration,
       cts_buckets: overviewCtsBuckets,
       execution_funnel: executionFunnel,
+      options_performance: optionsPerformance,
     },
   };
 }
