@@ -38,6 +38,34 @@ type FinalCTSResult = {
   lastClose: number;
 };
 
+type CtsAlignment =
+  | 'bullish_confirmed'
+  | 'bullish_timing_weak'
+  | 'mixed'
+  | 'countertrend_bounce'
+  | 'bearish_confirmed';
+
+const ALIGNMENT_ADJUSTMENT: Record<CtsAlignment, number> = {
+  bullish_confirmed: 5,
+  bullish_timing_weak: 2,
+  mixed: 0,
+  countertrend_bounce: -2,
+  bearish_confirmed: -5,
+};
+
+export function calculateFinalConviction(
+  ctsScore: number,
+  smartMoneyScore: number,
+  alignment: CtsAlignment,
+): number {
+  const score =
+    toNumber(ctsScore) * 0.55 +
+    toNumber(smartMoneyScore) * 0.45 +
+    ALIGNMENT_ADJUSTMENT[alignment];
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 export const calculateFinalCTS = ({
   dailyCloses,
   dailyVolumes,

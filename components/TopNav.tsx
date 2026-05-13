@@ -7,6 +7,7 @@ import LuckmiLogo from "@/components/brand/LuckmiLogo";
 
 type ActivePage =
   | "dashboard"
+  | "smart-money"
   | "watchlist"
   | "portfolio"
   | "auto"
@@ -26,6 +27,7 @@ type TopNavProps = {
 
 const navItems: { label: string; href: string; key: ActivePage }[] = [
   { label: "Dashboard", href: "/dashboard", key: "dashboard" },
+  { label: "Smart Money", href: "/smart-money", key: "smart-money" },
   { label: "Picks", href: "/picks", key: "picks" },
   { label: "Watchlist", href: "/watchlist", key: "watchlist" },
   { label: "Portfolio", href: "/portfolio", key: "portfolio" },
@@ -35,6 +37,7 @@ const navItems: { label: string; href: string; key: ActivePage }[] = [
 ];
 
 export default function TopNav({ activePage }: TopNavProps) {
+  const smartMoneyEnabled = process.env.NEXT_PUBLIC_SMART_MONEY_ENABLED !== "false";
   const [isAdmin, setIsAdmin] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -162,7 +165,9 @@ export default function TopNav({ activePage }: TopNavProps) {
           </div>
 
           <nav className="hidden items-center gap-1 lg:flex">
-            {navItems.map((item) => (
+            {navItems
+              .filter((item) => (item.key === "smart-money" ? smartMoneyEnabled : true))
+              .map((item) => (
               <Link key={item.key} href={item.href} className={navClass(item.key)}>
                 {item.label}
               </Link>
@@ -298,7 +303,9 @@ export default function TopNav({ activePage }: TopNavProps) {
               </div>
 
               <nav className="space-y-1">
-                {navItems.map((item) => (
+                {navItems
+                  .filter((item) => (item.key === "smart-money" ? smartMoneyEnabled : true))
+                  .map((item) => (
                   <Link
                     key={item.key}
                     href={item.href}

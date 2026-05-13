@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "sweep:buy-threshold": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs",
     "sweep:buy-threshold:all": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs --min 50 --max 70 --step 1 --windowDays 3",
     "sweep:buy-threshold:buyscore": "node --env-file=.env.local scripts/sweep-buy-threshold.mjs --scoreField buy_score --min 45 --max 80 --step 1 --windowDays 3"
@@ -51,6 +53,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.6"
   }
 }
