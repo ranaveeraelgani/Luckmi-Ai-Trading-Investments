@@ -18,16 +18,28 @@ function getOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-async function fetchOpportunities(origin: string): Promise<OptionsOpportunity[]> {
-  const res = await fetch(`${origin}/api/options/opportunities`, {
-    headers: { 'x-internal-cron': 'true' },
-    cache: 'no-store',
-  });
 
-  if (!res.ok) return [];
-
-  const data = await res.json().catch(() => ({}));
-  return Array.isArray(data?.opportunities) ? (data.opportunities as OptionsOpportunity[]) : [];
+// Enhanced: fetch opportunities with retry if cache is cold (skipped)
+async function fetchOpportunitiesWithRetry(origin: string, maxRetries = 2, delayMs = 7000): Promise<OptionsOpportunity[]> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(`${origin}/api/options/opportunities?require_cached=1`, {
+      headers: { 'x-internal-cron': 'true' },
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    if (Array.isArray(data?.opportunities) && data.opportunities.length > 0) {
+      return data.opportunities as OptionsOpportunity[];
+    }
+    // If cache is cold, wait and retry
+    if (data?.skipped && data?.reason === 'no-cache-yet' && attempt < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+    // If empty for other reason, break
+    break;
+  }
+  return [];
 }
 
 async function fetchAllTradeIdsForUser(userId: string): Promise<string[]> {
@@ -146,9 +158,10 @@ export async function GET(req: Request) {
         entrySkipReason = `account: ${canTrade.reason}`;
       } else {
         const prefs = await getOptionPreferences(user.id);
-        const opportunities = await fetchOpportunities(getOrigin(req));
+        // Use robust retry logic for cold cache
+        const opportunities = await fetchOpportunitiesWithRetry(getOrigin(req), 2, 7000);
         if (opportunities.length === 0) {
-          entrySkipReason = 'no opportunities available';
+          entrySkipReason = 'no opportunities available (after cache retry)';
         } else {
           const result = await executeOptionEntriesForUser({
             userId: user.id,
