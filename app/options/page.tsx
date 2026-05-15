@@ -554,16 +554,22 @@ function OptionsHistoryDrawer({
 }) {
   // Group by exit date for closed trades so recent exits appear under "today".
   // Open trades continue to use entry date.
-  const byDay = trades.reduce<Record<string, PaperTrade[]>>((acc, t) => {
+  // Map day string to anchor date for sorting
+  const byDay = trades.reduce<Record<string, { anchor: Date; trades: PaperTrade[] }>>((acc, t) => {
     const anchorTs = t.status === 'closed' && t.exit_at ? t.exit_at : t.entry_at;
-    const day = new Date(anchorTs).toLocaleDateString(undefined, {
+    const anchorDate = new Date(anchorTs);
+    const day = anchorDate.toLocaleDateString(undefined, {
       weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
     });
-    (acc[day] = acc[day] ?? []).push(t);
+    if (!acc[day]) acc[day] = { anchor: anchorDate, trades: [] };
+    acc[day].trades.push(t);
     return acc;
   }, {});
 
-  const days = Object.keys(byDay);
+  // Sort days by anchor date descending
+  const days = Object.entries(byDay)
+    .sort((a, b) => b[1].anchor.getTime() - a[1].anchor.getTime())
+    .map(([day]) => day);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -595,7 +601,7 @@ function OptionsHistoryDrawer({
             <div className="text-center text-gray-500 text-sm mt-10">No trades yet.</div>
           )}
           {days.map(day => {
-            const dayTrades = byDay[day];
+            const dayTrades = byDay[day].trades;
             const openCount = dayTrades.filter(t => t.status === 'open').length;
             const closedCount = dayTrades.filter(t => t.status === 'closed').length;
             const dayPnl = dayTrades
